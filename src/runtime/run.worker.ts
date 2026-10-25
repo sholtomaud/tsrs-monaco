@@ -9,7 +9,8 @@ import { formatArgs } from './format.ts';
 import { createLinker } from './module-graph.ts';
 import type { ConsoleLevel, RunMessage, RunRequest } from './protocol.ts';
 
-const TEST_TIMEOUT_MS = 5000;
+// Generous: a first test may download a library (onnxruntime-web is ~30 MB).
+const TEST_TIMEOUT_MS = 30_000;
 
 const post = (message: RunMessage) => self.postMessage(message);
 
@@ -97,12 +98,15 @@ async function runTest({ file, name, fn }: RegisteredTest) {
 self.onmessage = async ({ data }: MessageEvent<RunRequest>) => {
   const started = performance.now();
   try {
-    const linkEntry = createLinker(data.modules, (path, code) =>
-      URL.createObjectURL(
-        new Blob([`${code}\n//# sourceURL=${path}`], {
-          type: 'text/javascript',
-        })
-      )
+    const linkEntry = createLinker(
+      data.modules,
+      (path, code) =>
+        URL.createObjectURL(
+          new Blob([`${code}\n//# sourceURL=${path}`], {
+            type: 'text/javascript',
+          })
+        ),
+      data.imports
     );
 
     if (data.mode === 'run') {

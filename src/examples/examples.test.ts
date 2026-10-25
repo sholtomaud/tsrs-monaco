@@ -1,6 +1,8 @@
 // Compiles every example with the real @tsrs/wasm (its Node build), then runs
 // the example's entry and *.test.ts files with the playground's globals, the
-// same way the run worker does in the browser.
+// same way the run worker does in the browser. Examples that import npm
+// packages need the network (types from jsDelivr, code from CDNs), so they
+// are covered by e2e/npm-examples.live.spec.ts instead.
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert';
@@ -10,6 +12,7 @@ import { ENTRY, PROJECT_ROOT, TEST_FILE, TSCONFIG, outputPathFor, toAbsolute, to
 import { createLinker } from '../runtime/module-graph.ts';
 import { expect } from '../runtime/expect.ts';
 import { toChart, type Chart, type PlotOptions, type Series } from '../runtime/chart.ts';
+import { projectImports } from '../packages/package-manager.ts';
 
 async function compile(files: Record<string, string>) {
   const absolute = Object.fromEntries(
@@ -33,6 +36,13 @@ const linkerFor = (outputs: Record<string, string>) =>
   );
 
 for (const example of EXAMPLES) {
+  const npm = [...new Set(projectImports(example.files).map((i) => i.name))];
+  if (npm.length) {
+    test(`example: ${example.title}`, {
+      skip: `imports ${npm.join(', ')} from npm; run LIVE_CDN=1 npx playwright test e2e/npm-examples.live.spec.ts`,
+    });
+    continue;
+  }
   describe(`example: ${example.title}`, () => {
     let compiled: Awaited<ReturnType<typeof compile>>;
 

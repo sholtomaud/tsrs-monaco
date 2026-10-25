@@ -17,6 +17,8 @@ export const DEFAULT_TSCONFIG = `{
     // Code runs in a Web Worker, so there is no DOM.
     "lib": ["esnext", "webworker"],
     "strict": true,
+    // Don't type check fetched npm declaration files, only your code.
+    "skipLibCheck": true,
     "allowImportingTsExtensions": true,
     "rewriteRelativeImportExtensions": true,
     "rootDir": "src",

@@ -3,10 +3,13 @@
 // resolved against them. Instead every module is turned into a Blob URL in
 // dependency order and its relative imports are rewritten to point at the
 // Blob URLs of its dependencies. Bare and absolute URL specifiers are left
-// alone so `import x from 'https://esm.sh/...'` still works at runtime.
+// alone unless `external` maps them (npm packages to CDN URLs), so
+// `import x from 'https://esm.sh/...'` still works at runtime.
 
 const SPECIFIER =
-  /(\bimport\s*\(\s*|\bimport\s+|\bfrom\s+|\bexport\s*\*\s*from\s+)(['"])(\.{1,2}\/[^'"]*)\2/g;
+  /(\bimport\s*\(\s*|\bimport\s+|\bfrom\s*|\bexport\s*\*\s*from\s*)(['"])([^'"\n]+)\2/g;
+
+const isRelative = (spec: string) => spec.startsWith('./') || spec.startsWith('../');
 
 export type Modules = Record<string, string>;
 
@@ -39,7 +42,7 @@ export function resolveSpecifier(
 }
 
 export function relativeImports(code: string): string[] {
-  return [...code.matchAll(SPECIFIER)].map((m) => m[3]);
+  return [...code.matchAll(SPECIFIER)].map((m) => m[3]).filter(isRelative);
 }
 
 export class LinkError extends Error {}
@@ -52,7 +55,8 @@ export class LinkError extends Error {}
  */
 export function createLinker(
   modules: Modules,
-  toUrl: (path: string, code: string) => string
+  toUrl: (path: string, code: string) => string,
+  external: Record<string, string> = {}
 ): (entry: string) => string {
   const urls = new Map<string, string>();
   const visiting = new Set<string>();
@@ -69,6 +73,10 @@ export function createLinker(
     const code = modules[path].replace(
       SPECIFIER,
       (match, prefix: string, quote: string, spec: string) => {
+        if (!isRelative(spec)) {
+          const url = external[spec];
+          return url ? `${prefix}${quote}${url}${quote}` : match;
+        }
         const target = resolveSpecifier(modules, path, spec);
         if (!target) {
           throw new LinkError(`Cannot find module '${spec}' from '${path}'.`);

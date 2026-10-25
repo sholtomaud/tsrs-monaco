@@ -3,7 +3,8 @@
 
 import { loadModule, tsc } from '@tsrs/wasm';
 import wasmUrl from '@tsrs/wasm/tsrs.wasm?url';
-import type { CompileRequest, CompilerMessage } from './protocol.ts';
+import type { CompilerMessage, CompilerRequest } from './protocol.ts';
+import type { ProjectFiles } from './project.ts';
 import { PROJECT_ROOT, TSCONFIG, toAbsolute, toRelative } from './project.ts';
 
 const post = (message: CompilerMessage) => self.postMessage(message);
@@ -15,11 +16,13 @@ module.then(
   () => {} // Reported on the first compile instead.
 );
 
-async function compile({ id, files }: CompileRequest) {
+let libraries: ProjectFiles = {};
+
+async function compile(id: number, files: ProjectFiles) {
   const t0 = performance.now();
   try {
     const absolute: Record<string, string> = {};
-    for (const [path, text] of Object.entries(files)) {
+    for (const [path, text] of Object.entries({ ...libraries, ...files })) {
       absolute[toAbsolute(path)] = text;
     }
     const result = await tsc(['-p', toAbsolute(TSCONFIG)], {
@@ -30,6 +33,7 @@ async function compile({ id, files }: CompileRequest) {
     });
     const outputs: Record<string, string> = {};
     for (const [path, text] of Object.entries(result.files ?? {})) {
+      if (path.includes('/node_modules/')) continue;
       outputs[toRelative(path)] = text;
     }
     post({
@@ -53,6 +57,10 @@ async function compile({ id, files }: CompileRequest) {
 // Each call instantiates a fresh module; run them one at a time so memory
 // stays bounded when edits arrive faster than checks finish.
 let queue = Promise.resolve();
-self.onmessage = (event: MessageEvent<CompileRequest>) => {
-  queue = queue.then(() => compile(event.data));
+self.onmessage = ({ data }: MessageEvent<CompilerRequest>) => {
+  if (data.type === 'libraries') {
+    libraries = data.files;
+    return;
+  }
+  queue = queue.then(() => compile(data.id, data.files));
 };

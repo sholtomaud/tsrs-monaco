@@ -70,6 +70,26 @@
     </section>
 
     <section class="mt-12">
+      <h2 class="text-2xl font-bold mb-4">npm packages</h2>
+      <div class="flow">
+        <p>
+          Write <code>import * as ort from 'onnxruntime-web'</code> and the playground fetches what's needed, much as
+          <code>npm install</code> would, but lazily. For <strong>types</strong>, it resolves the version on jsDelivr and
+          follows the package's declaration files (relative imports, other packages, <code>/// &lt;reference&gt;</code>,
+          <code>@types/*</code>), fetching only the <code>.d.ts</code> files the import reaches. They're handed to tsrs as
+          <code>node_modules/</code>, so you get real type errors against the library.
+        </p>
+        <p>
+          On <strong>Run</strong>, each bare import is rewritten to a URL with the same version. A self-contained
+          browser bundle (like onnxruntime-web's) loads straight from jsDelivr, so files it locates with
+          <code>import.meta.url</code>, such as its <code>.wasm</code>, load from next to it. Anything else goes through
+          esm.sh, which resolves the package's own dependencies (so tfjs backends share one <code>tfjs-core</code>).
+          Add a root <code>package.json</code> with <code>dependencies</code> to pin versions.
+        </p>
+      </div>
+    </section>
+
+    <section class="mt-12">
       <h2 class="text-2xl font-bold mb-4">Compared with Vite</h2>
       <div class="overflow-x-auto">
         <table>
@@ -91,8 +111,8 @@
         <li>The wasm build is single-threaded and each instance is capped at 4 GiB of linear memory (wasm32).</li>
         <li>Your code runs in a worker, so there is no DOM: the default <code>lib</code> is <code>esnext</code> + <code>webworker</code>.</li>
         <li>
-          npm packages aren't resolved. To type check an import, add its declarations as a <code>.d.ts</code> file in
-          <code>src/</code>; absolute URL imports (e.g. from esm.sh) are left untouched at runtime.
+          npm packages need the network. A package's first type fetch can take a few seconds (the browser caches it
+          afterwards). Libraries that need the DOM won't work in the worker.
         </li>
         <li>Circular imports between your files are not supported by the Blob URL linker.</li>
       </ul>

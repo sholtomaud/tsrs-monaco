@@ -1,10 +1,10 @@
 import type { TsrsDiagnostic } from './diagnostics.ts';
 import type { ProjectFiles } from './project.ts';
 
-export interface CompileRequest {
-  id: number;
-  files: ProjectFiles;
-}
+export type CompilerRequest =
+  | { type: 'compile'; id: number; files: ProjectFiles }
+  /** Declaration files of npm packages, added to every compile until replaced. */
+  | { type: 'libraries'; files: ProjectFiles };
 
 export interface CompileResult {
   exitCode: number;

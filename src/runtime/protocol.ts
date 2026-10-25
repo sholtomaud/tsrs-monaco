@@ -7,6 +7,8 @@ export interface RunRequest {
   /** 'run' imports entries[0]; 'test' imports every entry and runs its tests. */
   mode: 'run' | 'test';
   entries: string[];
+  /** Bare specifiers ('onnxruntime-web') to the URLs to import them from. */
+  imports: Record<string, string>;
 }
 
 export interface TestResult {
