@@ -201,3 +201,51 @@
   border-top: 1px solid var(--boba-border);
   background: var(--boba-surface);
 }
+
+:host .select {
+  appearance: auto;
+  background: var(--boba-bg);
+  max-width: 17rem;
+}
+:host .badge[data-severity='pass'] { background: #16a34a; color: white; }
+
+:host .tests { font-size: 0.8125rem; }
+:host .test-result {
+  padding: 0.375rem 1rem;
+  border-bottom: 1px solid var(--boba-border);
+}
+:host .test-heading { display: flex; align-items: baseline; gap: 0.5rem; }
+:host .test-icon { font-weight: 700; width: 1rem; flex: none; }
+:host .test-result[data-status='pass'] .test-icon { color: #16a34a; }
+:host .test-result[data-status='fail'] .test-icon { color: #ef4444; }
+:host .test-name { flex: 1; }
+:host .test-file {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  color: var(--boba-text-muted);
+}
+:host .test-error {
+  margin: 0.25rem 0 0 1.5rem;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #dc2626;
+}
+:host .test-error:empty { display: none; }
+@media (prefers-color-scheme: dark) {
+  :host .test-error { color: #f87171; }
+}
+
+:host .plots {
+  display: grid;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+}
+:host .plots svg {
+  width: 100%;
+  height: auto;
+  color: var(--boba-text);
+  background: var(--boba-surface);
+  border: 1px solid var(--boba-border);
+  border-radius: 0.5rem;
+}

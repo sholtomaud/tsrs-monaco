@@ -31,7 +31,14 @@ Background: [Cloudflare's TypeScript compiler in Rust](https://socket.dev/blog/c
   so every diagnostic comes from tsrs.
 - **Sandboxed execution.** Each Run starts a new worker. Stop (or the next Run) terminates it, so an infinite loop
   never freezes the page. Code runs in a worker, so the default `lib` is `esnext` + `webworker` (no DOM).
-- **Persistence.** Files are saved to `localStorage`; Reset restores the example project.
+- **Tests and plots.** User code gets three globals, typed in each example's `src/playground.d.ts`: `plot()` draws a
+  line chart in the Plot panel, and `test()` / `expect()` (a Jest-style subset) register tests that **Test**
+  (Ctrl/⌘ + Shift + Enter) runs from every `src/**/*.test.ts`.
+- **Examples.** *Hello, types* and *Odum: CASH money storage*, a port of H.T. Odum's BASIC minimodel
+  (Table I-5): one storage with constant inflow `J` and outflow `K*M`, integrated with Euler's method, with tests
+  against its steady state `J/K` and exact solution. `npm test` compiles every example with the real `@tsrs/wasm`
+  and runs its tests, so a broken example fails CI.
+- **Persistence.** Files are saved to `localStorage`; Reset restores the current example.
 
 ## Source layout
 
@@ -46,7 +53,10 @@ src/
 │   ├── run.worker.ts        # executes emitted modules, forwards console output
 │   ├── module-graph.ts      # links modules as Blob URLs, dependencies first
 │   ├── format.ts            # console argument formatting
+│   ├── expect.ts            # expect() matchers for user tests
+│   ├── chart.ts             # plot() data and SVG rendering
 │   └── runner.ts            # one worker per run, stop()
+├── examples/                # example projects (+ a test that compiles and runs them)
 ├── editor/monaco.ts         # Monaco set-up (features, languages, workers, theme)
 ├── store/playground-store.ts
 └── components/

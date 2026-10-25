@@ -1,6 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert';
 import {
+  createLinker,
   joinPath,
   link,
   LinkError,
@@ -90,5 +91,25 @@ describe('link', () => {
     );
     assert.throws(() => link({ 'a.js': "import './x.js';" }, 'a.js', (p) => p), /Cannot find module/);
     assert.throws(() => link({}, 'a.js', (p) => p), /was not emitted/);
+  });
+});
+
+describe('createLinker', () => {
+  test('shares dependencies between entries', () => {
+    const linked: string[] = [];
+    const linkEntry = createLinker(
+      {
+        'a.test.js': "import './model.js';",
+        'b.test.js': "import './model.js';",
+        'model.js': '',
+      },
+      (path) => {
+        linked.push(path);
+        return `blob:${path}`;
+      }
+    );
+    linkEntry('a.test.js');
+    linkEntry('b.test.js');
+    assert.deepStrictEqual(linked, ['model.js', 'a.test.js', 'b.test.js']);
   });
 });

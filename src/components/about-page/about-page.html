@@ -52,6 +52,24 @@
     </ol>
 
     <section class="mt-12">
+      <h2 class="text-2xl font-bold mb-4">Tests, plots and examples</h2>
+      <div class="flow">
+        <p>
+          Your code gets three globals, typed in each example's <code>src/playground.d.ts</code>:
+          <code>plot(series, options)</code> draws a line chart in the Plot panel, and <code>test(name, fn)</code> with
+          Jest-style <code>expect(value)</code> matchers registers tests. <strong>Test</strong> (Ctrl/⌘ + Shift + Enter)
+          compiles the project and runs every <code>src/**/*.test.ts</code> file in a fresh worker.
+        </p>
+        <p>
+          The <strong>Odum: CASH money storage</strong> example ports Table I-5's BASIC listing, H.T. Odum's simplest
+          energy-systems minimodel: one storage with a constant inflow and an outflow proportional to the storage,
+          <code>dM/dt = J - K*M</code>, integrated with Euler's method like the original <code>M=M+DM*dt</code> loop.
+          Its tests check the result against the steady state <code>J/K</code> and the exact solution.
+        </p>
+      </div>
+    </section>
+
+    <section class="mt-12">
       <h2 class="text-2xl font-bold mb-4">Compared with Vite</h2>
       <div class="overflow-x-auto">
         <table>

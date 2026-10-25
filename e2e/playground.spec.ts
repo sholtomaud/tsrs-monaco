@@ -104,3 +104,44 @@ test('about page explains the pipeline', async ({ page }) => {
   await expect(page.locator('h1')).toHaveText('How it works');
   await expect(page.locator('app-nav a[href="/about"]')).toHaveAttribute('aria-current', 'page');
 });
+
+test('runs the example tests with test() and expect()', async ({ page }) => {
+  await page.locator('#test').click();
+  await expect(page.locator('#test-summary')).toContainText('2 passed, 0 failed');
+  await expect(page.locator('#tests .test-result[data-status="pass"]')).toHaveCount(2);
+  await expect(page.locator('#test-count')).toHaveText('2');
+
+  // Break a test and see the assertion message.
+  await page.locator('.file-tab[data-file="src/greet.test.ts"] .file-name').click();
+  await replaceSource(page, "test('fails', () => {\n  expect(1 + 1).toBe(3);\n});\n");
+  await page.keyboard.press('ControlOrMeta+Shift+Enter');
+  const failure = page.locator('#tests .test-result[data-status="fail"]');
+  await expect(failure).toContainText('fails');
+  await expect(failure.locator('.test-error')).toContainText('expect(2).toBe(3)');
+  await expect(page.locator('#test-count')).toHaveText('1 failed');
+});
+
+test('Odum CASH example simulates, plots and passes its tests', async ({ page }) => {
+  page.on('dialog', (dialog) => dialog.accept());
+  await page.locator('#example').selectOption('odum-cash');
+  await expect(page.locator('.file-tab[data-file="src/cash.ts"]')).toBeVisible();
+  await waitForCheck(page);
+  await expect(page.locator('#status')).toHaveText('No type errors');
+
+  await page.locator('#run').click();
+  // The Plot panel opens with M rising to J/K = 80 and draining from 160.
+  const chart = page.locator('#plots svg');
+  await expect(chart).toBeVisible();
+  await expect(chart.locator('path')).toHaveCount(3);
+  await expect(chart).toContainText('CASH: a simple money storage');
+  await page.locator('[data-panel="console"][role="tab"]').click();
+  await expect(page.locator('#console')).toContainText('week  40   M = 69.72');
+  await expect(page.locator('#console')).toContainText('Steady state J/K = 80');
+
+  await page.locator('#test').click();
+  await expect(page.locator('#test-summary')).toContainText('7 passed, 0 failed');
+
+  // The choice of example survives a reload.
+  await page.reload();
+  await expect(page.locator('#example')).toHaveValue('odum-cash');
+});
