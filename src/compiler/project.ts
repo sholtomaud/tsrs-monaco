@@ -5,6 +5,7 @@ export const PROJECT_ROOT = '/project';
 export const TSCONFIG = 'tsconfig.json';
 export const OUT_DIR = 'dist';
 export const ENTRY = 'src/index.ts';
+export const TEST_FILE = /\.test\.(m|c)?js$/;
 
 export type ProjectFiles = Record<string, string>;
 
@@ -24,34 +25,6 @@ export const DEFAULT_TSCONFIG = `{
   "include": ["src"]
 }
 `;
-
-export const DEFAULT_FILES: ProjectFiles = {
-  [TSCONFIG]: DEFAULT_TSCONFIG,
-  [ENTRY]: `import { greet, type User } from './greet.ts';
-
-const users: User[] = [
-  { name: 'Alice', languages: ['TypeScript', 'Rust'] },
-  { name: 'Bob', languages: ['JavaScript'] },
-];
-
-for (const user of users) {
-  console.log(greet(user));
-}
-
-// Try breaking a type: change 'Alice' to 42 and watch the squiggle appear.
-const total = users.reduce((n, u) => n + u.languages.length, 0);
-console.info(\`\${users.length} users know \${total} languages\`);
-`,
-  'src/greet.ts': `export interface User {
-  name: string;
-  languages: string[];
-}
-
-export function greet(user: User): string {
-  return \`Hello, \${user.name}! You write \${user.languages.join(' and ')}.\`;
-}
-`,
-};
 
 export function toAbsolute(path: string): string {
   return `${PROJECT_ROOT}/${path}`;

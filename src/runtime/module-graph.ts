@@ -45,17 +45,15 @@ export function relativeImports(code: string): string[] {
 export class LinkError extends Error {}
 
 /**
- * Rewrites every module reachable from `entry`, calling `toUrl` for each one
- * after its dependencies, and returns the entry's URL.
+ * Returns a function that rewrites every module reachable from an entry,
+ * calling `toUrl` for each one after its dependencies, and returns the
+ * entry's URL. Modules are linked once per linker, so entries that share a
+ * dependency also share its instance.
  */
-export function link(
+export function createLinker(
   modules: Modules,
-  entry: string,
   toUrl: (path: string, code: string) => string
-): string {
-  if (!(entry in modules)) {
-    throw new LinkError(`Entry module '${entry}' was not emitted.`);
-  }
+): (entry: string) => string {
   const urls = new Map<string, string>();
   const visiting = new Set<string>();
 
@@ -84,5 +82,18 @@ export function link(
     return url;
   };
 
-  return visit(entry, []);
+  return (entry) => {
+    if (!(entry in modules)) {
+      throw new LinkError(`Entry module '${entry}' was not emitted.`);
+    }
+    return visit(entry, []);
+  };
+}
+
+export function link(
+  modules: Modules,
+  entry: string,
+  toUrl: (path: string, code: string) => string
+): string {
+  return createLinker(modules, toUrl)(entry);
 }

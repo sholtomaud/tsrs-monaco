@@ -10,7 +10,7 @@
     "start": "vite --host",
     "dev": "vite --host",
     "build": "vite build --base ./",
-    "test": "node --test src/**/*.test.ts",
+    "test": "node --test 'src/**/*.test.ts'",
     "e2e": "npx playwright test"
   },
   "devDependencies": {

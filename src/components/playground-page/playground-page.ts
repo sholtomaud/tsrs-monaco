@@ -3,6 +3,7 @@ import { monaco, languageOf } from '../../editor/monaco.ts';
 import { getCompiler } from '../../compiler/compiler.ts';
 import {
   ENTRY,
+  TEST_FILE,
   TSCONFIG,
   PROJECT_ROOT,
   isSourceFile,
@@ -15,8 +16,10 @@ import {
   type Severity,
 } from '../../compiler/diagnostics.ts';
 import { Runner } from '../../runtime/runner.ts';
-import type { RunMessage } from '../../runtime/protocol.ts';
-import { playgroundStore, resetProject } from '../../store/playground-store.ts';
+import { renderChart } from '../../runtime/chart.ts';
+import type { RunMessage, RunRequest, TestResult } from '../../runtime/protocol.ts';
+import { DEFAULT_EXAMPLE, EXAMPLES, findExample } from '../../examples/index.ts';
+import { loadExample, playgroundStore } from '../../store/playground-store.ts';
 import tsrsPackage from '@tsrs/wasm/package.json' with { type: 'json' };
 import template from './playground-page.html?raw';
 import style from './playground-page.css?raw';
@@ -31,7 +34,8 @@ const MARKER_SEVERITY: Record<Severity, monaco.MarkerSeverity> = {
   hint: monaco.MarkerSeverity.Hint,
 };
 
-type Panel = 'console' | 'js' | 'problems';
+type Panel = 'console' | 'tests' | 'plot' | 'js' | 'problems';
+type Mode = RunRequest['mode'];
 type StatusState = 'loading' | 'ready' | 'busy' | 'error';
 
 export class PlaygroundPageComponent extends BaseComponent {
@@ -45,7 +49,9 @@ export class PlaygroundPageComponent extends BaseComponent {
   private runner = new Runner();
   private checkTimer = 0;
   private checkSeq = 0;
-  private runAfterCheck = false;
+  private runAfterCheck: Mode | null = null;
+  private plotted = false;
+  private mode: Mode = 'run';
   private lastResult: CompileResult | null = null;
   private onCompilerReady = (e: Event) => {
     if (this.lastResult) return;
@@ -85,14 +91,20 @@ export class PlaygroundPageComponent extends BaseComponent {
     this.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () =>
       this.run()
     );
-    // Same shortcut when focus is outside the editor (e.g. on an output tab).
+    this.editor.addCommand(
+      monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter,
+      () => this.run('test')
+    );
+    // Same shortcuts when focus is outside the editor (e.g. on an output tab).
     this.addEventListener('keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !e.defaultPrevented) {
         e.preventDefault();
-        this.run();
+        this.run(e.shiftKey ? 'test' : 'run');
       }
     });
     this.$('#run').addEventListener('click', () => this.run());
+    this.$('#test').addEventListener('click', () => this.run('test'));
+    this.renderExamplePicker();
     this.$('#stop').addEventListener('click', () => this.stop());
     this.$('#reset').addEventListener('click', () => this.reset());
     this.$('#add-file').addEventListener('click', () => this.addFile());
@@ -197,16 +209,40 @@ export class PlaygroundPageComponent extends BaseComponent {
     this.scheduleCheck();
   }
 
+  private renderExamplePicker() {
+    const select = this.$<HTMLSelectElement>('#example');
+    select.replaceChildren(
+      ...EXAMPLES.map((example) => new Option(example.title, example.id))
+    );
+    select.value = playgroundStore.getState().exampleId;
+    select.addEventListener('change', () => {
+      const example = findExample(select.value);
+      if (
+        example &&
+        window.confirm(`Replace your files with the "${example.title}" example?`)
+      ) {
+        this.loadProject(example.id);
+      } else {
+        select.value = playgroundStore.getState().exampleId;
+      }
+    });
+  }
+
   private reset() {
-    if (!window.confirm('Replace your files with the example project?')) return;
+    if (!window.confirm("Restore this example's original files?")) return;
+    this.loadProject(playgroundStore.getState().exampleId);
+  }
+
+  private loadProject(exampleId: string) {
     this.stop();
     this.disposables.forEach((d) => d.dispose());
     this.disposables = [];
     this.models.forEach((m) => m.dispose());
     this.models.clear();
-    resetProject();
+    loadExample(findExample(exampleId) ?? DEFAULT_EXAMPLE);
     const { files, activeFile } = playgroundStore.getState();
     for (const [path, text] of Object.entries(files)) this.createModel(path, text);
+    this.$<HTMLSelectElement>('#example').value = playgroundStore.getState().exampleId;
     this.openFile(activeFile);
     this.check();
   }
@@ -227,12 +263,13 @@ export class PlaygroundPageComponent extends BaseComponent {
       if (seq !== this.checkSeq || !this.isConnected) return;
       this.applyResult(result);
       if (this.runAfterCheck) {
-        this.runAfterCheck = false;
-        this.execute(result);
+        const mode = this.runAfterCheck;
+        this.runAfterCheck = null;
+        this.execute(result, mode);
       }
     } catch (error) {
       if (seq !== this.checkSeq || !this.isConnected) return;
-      this.runAfterCheck = false;
+      this.runAfterCheck = null;
       this.setStatus('error', `Compiler error: ${(error as Error).message}`);
     }
   }
@@ -350,35 +387,73 @@ export class PlaygroundPageComponent extends BaseComponent {
 
   // ---- Running -----------------------------------------------------------------
 
-  private run() {
-    this.runAfterCheck = true;
-    this.showPanel('console');
+  private run(mode: Mode = 'run') {
+    this.runAfterCheck = mode;
+    this.showPanel(mode === 'test' ? 'tests' : 'console');
     this.check();
   }
 
-  private execute(result: CompileResult) {
-    const entry = outputPathFor(ENTRY);
+  private execute(result: CompileResult, mode: Mode) {
     const modules = Object.fromEntries(
       Object.entries(result.outputs).filter(([path]) => /\.(m|c)?js$/.test(path))
     );
+    const entries =
+      mode === 'test'
+        ? Object.keys(modules).filter((path) => TEST_FILE.test(path)).sort()
+        : [outputPathFor(ENTRY)];
     const errors = result.diagnostics.filter((d) => d.category === 1).length;
+    const despite = errors
+      ? ` despite ${errors} type error${errors === 1 ? '' : 's'}`
+      : '';
 
     this.clearConsole();
-    this.log(
-      'system',
-      errors
-        ? `▶ Running ${entry} despite ${errors} type error${errors === 1 ? '' : 's'}`
-        : `▶ Running ${entry}`
-    );
+    this.mode = mode;
+    this.plotted = false;
+    this.$('#plots').replaceChildren();
+    if (mode === 'test') {
+      this.$('#tests').replaceChildren();
+      this.setTestCount(0, 0);
+      if (!entries.length) {
+        this.$('#test-summary').textContent =
+          'No test files. Add src/<name>.test.ts and call test() and expect().';
+        return;
+      }
+      this.$('#test-summary').textContent = `Running ${entries.length} test file${entries.length === 1 ? '' : 's'}${despite}…`;
+      this.log('system', `▶ Testing ${entries.join(', ')}${despite}`);
+    } else {
+      this.log('system', `▶ Running ${entries[0]}${despite}`);
+    }
+
+    let passed = 0;
+    let failed = 0;
     this.$<HTMLButtonElement>('#stop').disabled = false;
-    this.runner.run({ modules, entry }, (message: RunMessage) => {
+    this.runner.run({ modules, mode, entries }, (message: RunMessage) => {
       switch (message.type) {
         case 'console':
           this.log(message.level, message.text);
           break;
         case 'error':
           this.log('error', message.text);
+          if (mode === 'test') {
+            this.$('#test-summary').textContent = `Tests could not run: ${message.text.split('\n')[0]}`;
+          }
           break;
+        case 'plot':
+          this.addPlot(message.chart);
+          break;
+        case 'test':
+          if (message.result.status === 'pass') passed++;
+          else failed++;
+          this.addTestResult(message.result);
+          this.setTestCount(passed, failed);
+          break;
+        case 'tests-done': {
+          const ms = Math.round(message.durationMs);
+          const summary = `${message.passed} passed, ${message.failed} failed (${ms} ms)`;
+          this.$('#test-summary').textContent = summary;
+          this.log(message.failed ? 'error' : 'system', `✓ Tests: ${summary}`);
+          break;
+        }
         case 'done':
           this.log(
             'system',
@@ -387,6 +462,36 @@ export class PlaygroundPageComponent extends BaseComponent {
           break;
       }
     });
+  }
+
+  private addPlot(chart: Parameters<typeof renderChart>[0]) {
+    const plots = this.$('#plots');
+    const figure = document.createElement('figure');
+    // renderChart escapes every user-supplied string it writes into the SVG.
+    figure.innerHTML = renderChart(chart);
+    plots.appendChild(figure);
+    // Show the first chart of a run as soon as it is drawn.
+    if (!this.plotted) {
+      this.plotted = true;
+      if (this.mode === 'run') this.showPanel('plot');
+    }
+  }
+
+  private addTestResult(result: TestResult) {
+    const tpl = this.$<HTMLTemplateElement>('#test-template');
+    const item = tpl.content.firstElementChild!.cloneNode(true) as HTMLElement;
+    item.dataset.status = result.status;
+    item.querySelector('.test-icon')!.textContent = result.status === 'pass' ? '✓' : '✗';
+    item.querySelector('.test-name')!.textContent = result.name;
+    item.querySelector('.test-file')!.textContent = `${result.file.replace(/^dist\//, 'src/').replace(/\.js$/, '.ts')} · ${Math.round(result.durationMs)} ms`;
+    item.querySelector('.test-error')!.textContent = result.error ?? '';
+    this.$('#tests').appendChild(item);
+  }
+
+  private setTestCount(passed: number, failed: number) {
+    const badge = this.$('#test-count');
+    badge.textContent = failed ? `${failed} failed` : String(passed);
+    badge.dataset.severity = failed ? 'error' : passed ? 'pass' : '';
   }
 
   private stop() {

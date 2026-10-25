@@ -6,8 +6,14 @@
       <span id="status" class="text-sm text-[var(--boba-text-muted)] truncate">Loading tsrs.wasm…</span>
     </div>
     <div class="flex items-center gap-2">
-      <button id="reset" class="btn btn-ghost" title="Restore the example project">Reset</button>
+      <label class="sr-only" for="example">Example</label>
+      <select id="example" class="btn btn-ghost select" title="Load an example project"></select>
+      <button id="reset" class="btn btn-ghost" title="Restore this example's original files">Reset</button>
       <button id="stop" class="btn btn-ghost" disabled title="Terminate the running worker">Stop</button>
+      <button id="test" class="btn btn-ghost" title="Compile and run src/**/*.test.ts (Ctrl/⌘ + Shift + Enter)">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
+        Test
+      </button>
       <button id="run" class="btn btn-primary" title="Compile and run (Ctrl/⌘ + Enter)">
         <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l12-7.5z" /></svg>
         Run
@@ -29,6 +35,10 @@
     <section class="pane" aria-label="Output">
       <div class="tabs" role="tablist" aria-label="Output">
         <button class="tab" role="tab" data-panel="console" aria-selected="true">Console</button>
+        <button class="tab" role="tab" data-panel="tests" aria-selected="false">
+          Tests <span id="test-count" class="badge" data-count="0">0</span>
+        </button>
+        <button class="tab" role="tab" data-panel="plot" aria-selected="false">Plot</button>
         <button class="tab" role="tab" data-panel="js" aria-selected="false">JavaScript</button>
         <button class="tab" role="tab" data-panel="problems" aria-selected="false">
           Problems <span id="problem-count" class="badge" data-count="0">0</span>
@@ -37,6 +47,15 @@
       <div class="panel" data-panel="console">
         <div id="console" class="console" aria-live="polite">
           <div class="console-line console-system">Press Run (Ctrl/⌘ + Enter) to compile with tsrs and execute the output in a Web Worker.</div>
+        </div>
+      </div>
+      <div class="panel" data-panel="tests" hidden>
+        <div id="test-summary" class="panel-caption">Press Test to run the project's *.test.ts files with test() and expect().</div>
+        <ul id="tests" class="tests"></ul>
+      </div>
+      <div class="panel" data-panel="plot" hidden>
+        <div id="plots" class="plots">
+          <p class="panel-caption">Call plot() from your code to draw charts here. Try the Odum CASH example.</p>
         </div>
       </div>
       <div class="panel" data-panel="js" hidden>
@@ -64,6 +83,17 @@
 
 <template id="console-line-template">
   <div class="console-line"></div>
+</template>
+
+<template id="test-template">
+  <li class="test-result">
+    <div class="test-heading">
+      <span class="test-icon"></span>
+      <span class="test-name"></span>
+      <span class="test-file"></span>
+    </div>
+    <pre class="test-error"></pre>
+  </li>
 </template>
 
 <template id="problem-template">
