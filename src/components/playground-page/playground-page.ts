@@ -8,6 +8,7 @@ import {
   PROJECT_ROOT,
   isSourceFile,
   outputPathFor,
+  type ProjectFiles,
 } from '../../compiler/project.ts';
 import type { CompileResult } from '../../compiler/protocol.ts';
 import {
@@ -20,6 +21,12 @@ import { renderChart } from '../../runtime/chart.ts';
 import type { RunMessage, RunRequest, TestResult } from '../../runtime/protocol.ts';
 import { DEFAULT_EXAMPLE, EXAMPLES, findExample } from '../../examples/index.ts';
 import { loadExample, playgroundStore } from '../../store/playground-store.ts';
+import {
+  getPackageManager,
+  PACKAGE_JSON,
+  projectImports,
+} from '../../packages/package-manager.ts';
+import type { Acquisition } from '../../packages/type-acquisition.ts';
 import tsrsPackage from '@tsrs/wasm/package.json' with { type: 'json' };
 import template from './playground-page.html?raw';
 import style from './playground-page.css?raw';
@@ -46,6 +53,8 @@ export class PlaygroundPageComponent extends BaseComponent {
   private models = new Map<string, monaco.editor.ITextModel>();
   private disposables: monaco.IDisposable[] = [];
   private compiler = getCompiler();
+  private packages = getPackageManager();
+  private acquisition: Acquisition = { files: {}, versions: {}, errors: [] };
   private runner = new Runner();
   private checkTimer = 0;
   private checkSeq = 0;
@@ -181,18 +190,24 @@ export class PlaygroundPageComponent extends BaseComponent {
   }
 
   private addFile() {
-    const input = window.prompt('New file name (inside src/):', 'src/utils.ts');
+    const input = window.prompt(
+      'New file name (inside src/), or package.json to pin npm versions:',
+      'src/utils.ts'
+    );
     if (!input) return;
     let path = input.trim().replace(/^\.?\/+/, '');
-    if (!path.startsWith('src/')) path = `src/${path}`;
-    if (!/\.(m|c)?(t|j)sx?$/.test(path)) path += '.ts';
+    const initial = path === PACKAGE_JSON ? '{\n  "dependencies": {}\n}\n' : '';
+    if (path !== PACKAGE_JSON) {
+      if (!path.startsWith('src/')) path = `src/${path}`;
+      if (!/\.(m|c)?(t|j)sx?$/.test(path)) path += '.ts';
+    }
     if (this.models.has(path)) {
       this.openFile(path);
       return;
     }
     const { files } = playgroundStore.getState();
-    playgroundStore.setState({ files: { ...files, [path]: '' } });
-    this.createModel(path, '');
+    playgroundStore.setState({ files: { ...files, [path]: initial } });
+    this.createModel(path, initial);
     this.openFile(path);
     this.scheduleCheck();
   }
@@ -257,9 +272,12 @@ export class PlaygroundPageComponent extends BaseComponent {
   private async check() {
     window.clearTimeout(this.checkTimer);
     const seq = ++this.checkSeq;
-    if (this.compiler.ready) this.setStatus('busy', 'Type checking with tsrs…');
+    const { files } = playgroundStore.getState();
     try {
-      const result = await this.compiler.compile(playgroundStore.getState().files);
+      await this.fetchTypes(files, seq);
+      if (seq !== this.checkSeq || !this.isConnected) return;
+      if (this.compiler.ready) this.setStatus('busy', 'Type checking with tsrs…');
+      const result = await this.compiler.compile(files);
       if (seq !== this.checkSeq || !this.isConnected) return;
       this.applyResult(result);
       if (this.runAfterCheck) {
@@ -274,9 +292,37 @@ export class PlaygroundPageComponent extends BaseComponent {
     }
   }
 
+  /** Fetches declaration files for npm imports and hands them to the compiler. */
+  private async fetchTypes(files: ProjectFiles, seq: number) {
+    const imports = projectImports(files);
+    const fresh = imports
+      .map((i) => i.name)
+      .filter((name) => !(name in this.acquisition.versions));
+    const pending = this.packages.types(files);
+    if (fresh.length && seq === this.checkSeq) {
+      this.setStatus('busy', `Fetching types for ${[...new Set(fresh)].join(', ')} from npm…`);
+    }
+    this.acquisition = await pending;
+    this.compiler.setLibraries(this.acquisition.files);
+  }
+
   private applyResult(result: CompileResult) {
     this.lastResult = result;
-    const problems = result.diagnostics.map(toProblem);
+    const problems = [
+      ...result.diagnostics.map(toProblem),
+      ...this.acquisition.errors.map(
+        (message): Problem => ({
+          file: null,
+          severity: 'warning',
+          code: 0,
+          message,
+          startLineNumber: 1,
+          startColumn: 1,
+          endLineNumber: 1,
+          endColumn: 1,
+        })
+      ),
+    ];
     for (const [path, model] of this.models) {
       monaco.editor.setModelMarkers(
         model,
@@ -301,8 +347,12 @@ export class PlaygroundPageComponent extends BaseComponent {
     const errors = problems.filter((p) => p.severity === 'error').length;
     const ms = Math.round(result.durationMs);
     const mib = Math.round(result.memoryBytes / 1024 / 1024);
+    const npm = Object.entries(this.acquisition.versions)
+      .filter(([name]) => !name.startsWith('@types/'))
+      .map(([name, version]) => `${name}@${version}`);
     this.$('#stats').textContent =
-      `Checked + emitted in ${ms} ms · ${mib} MiB wasm memory · exit code ${result.exitCode}`;
+      `Checked + emitted in ${ms} ms · ${mib} MiB wasm memory · exit code ${result.exitCode}` +
+      (npm.length ? ` · npm: ${npm.join(', ')}` : '');
     this.setStatus(
       errors ? 'error' : 'ready',
       errors
@@ -330,7 +380,9 @@ export class PlaygroundPageComponent extends BaseComponent {
       item.querySelector('.problem-message')!.textContent = problem.message;
       item.querySelector('.problem-location')!.textContent = problem.file
         ? `${problem.file}:${problem.startLineNumber}:${problem.startColumn} · TS${problem.code}`
-        : `TS${problem.code}`;
+        : problem.code
+          ? `TS${problem.code}`
+          : 'npm';
       item
         .querySelector('button')!
         .addEventListener('click', () => this.reveal(problem));
@@ -393,7 +445,7 @@ export class PlaygroundPageComponent extends BaseComponent {
     this.check();
   }
 
-  private execute(result: CompileResult, mode: Mode) {
+  private async execute(result: CompileResult, mode: Mode) {
     const modules = Object.fromEntries(
       Object.entries(result.outputs).filter(([path]) => /\.(m|c)?js$/.test(path))
     );
@@ -424,10 +476,20 @@ export class PlaygroundPageComponent extends BaseComponent {
       this.log('system', `▶ Running ${entries[0]}${despite}`);
     }
 
+    const { files } = playgroundStore.getState();
+    const imports = await this.packages.runtimeImports(
+      modules,
+      files,
+      this.acquisition.versions
+    );
+    for (const [spec, url] of Object.entries(imports)) {
+      this.log('system', `↳ ${spec} from ${url}`);
+    }
+
     let passed = 0;
     let failed = 0;
     this.$<HTMLButtonElement>('#stop').disabled = false;
-    this.runner.run({ modules, mode, entries }, (message: RunMessage) => {
+    this.runner.run({ modules, mode, entries, imports }, (message: RunMessage) => {
       switch (message.type) {
         case 'console':
           this.log(message.level, message.text);

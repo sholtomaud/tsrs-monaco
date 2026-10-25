@@ -34,10 +34,25 @@ Background: [Cloudflare's TypeScript compiler in Rust](https://socket.dev/blog/c
 - **Tests and plots.** User code gets three globals, typed in each example's `src/playground.d.ts`: `plot()` draws a
   line chart in the Plot panel, and `test()` / `expect()` (a Jest-style subset) register tests that **Test**
   (Ctrl/⌘ + Shift + Enter) runs from every `src/**/*.test.ts`.
-- **Examples.** *Hello, types* and *Odum: CASH money storage*, a port of H.T. Odum's BASIC minimodel
+- **Examples.** *Hello, types*; *npm: ONNX Runtime Web* (builds a tiny ONNX model in memory and runs it);
+  *npm: TensorFlow.js + WebGPU* (fits a line with SGD on WebGPU, falling back to the CPU backend); and
+  *Odum: CASH money storage*, a port of H.T. Odum's BASIC minimodel
   (Table I-5): one storage with constant inflow `J` and outflow `K*M`, integrated with Euler's method, with tests
   against its steady state `J/K` and exact solution. `npm test` compiles every example with the real `@tsrs/wasm`
-  and runs its tests, so a broken example fails CI.
+  and runs its tests, so a broken example fails CI. The npm examples need the network, so they are checked by
+  `LIVE_CDN=1 npx playwright test e2e/npm-examples.live.spec.ts` instead; the regular e2e suite tests npm support
+  against a mocked CDN.
+- **npm packages.** Type `import * as ort from 'onnxruntime-web'` and it just works:
+  - *Types:* the playground resolves the version on jsDelivr, then follows the package's declaration files
+    (relative imports, other packages, `/// <reference>`, falling back to `@types/*`) and fetches only the `.d.ts`
+    files the import reaches. They're handed to tsrs as `node_modules/`, so it type checks your code against them.
+  - *Runtime:* each bare import in the emitted JavaScript is rewritten to a URL. If the package's browser ES module
+    is a self-contained bundle (onnxruntime-web), it loads straight from jsDelivr, so assets it finds with
+    `import.meta.url`, like its `.wasm`, load from next to it. Otherwise it loads through esm.sh (tfjs), which
+    resolves the package's own dependencies so packages share one copy of, e.g., `@tensorflow/tfjs-core`. The
+    Console lists where each import came from.
+  - Add a root `package.json` (via **+**) with `dependencies` to pin versions; otherwise imports use `latest`.
+    Types and runtime always use the same resolved version.
 - **Persistence.** Files are saved to `localStorage`; Reset restores the current example.
 
 ## Source layout
@@ -56,6 +71,7 @@ src/
 │   ├── expect.ts            # expect() matchers for user tests
 │   ├── chart.ts             # plot() data and SVG rendering
 │   └── runner.ts            # one worker per run, stop()
+├── packages/                # npm: type acquisition, CDN URLs, package.json resolution
 ├── examples/                # example projects (+ a test that compiles and runs them)
 ├── editor/monaco.ts         # Monaco set-up (features, languages, workers, theme)
 ├── store/playground-store.ts
@@ -79,8 +95,10 @@ Requires Node.js 25+ (as Boba does). Pushes to `main` run CI and deploy `dist/` 
 ## Limits
 
 - The wasm build is single-threaded; each instance has at most 4 GiB of linear memory (wasm32).
-- npm packages are not resolved. Add declarations for an import as a `.d.ts` file under `src/`; absolute URL imports
-  (e.g. `https://esm.sh/...`) are left as-is at runtime.
+- npm packages need the network (jsDelivr for types and bundles, esm.sh for everything else), and a package's
+  first type fetch can take a few seconds (tfjs-core is ~300 small `.d.ts` files; they're cached by the browser
+  afterwards). Libraries that need the DOM won't work, because code runs in a worker. Multi-threaded wasm (e.g.
+  ONNX Runtime threads) needs a cross-origin isolated page, which GitHub Pages can't provide.
 - Circular imports between project files are not supported by the Blob URL linker.
 
 ## License

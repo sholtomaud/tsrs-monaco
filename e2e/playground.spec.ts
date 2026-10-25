@@ -3,6 +3,8 @@ import { test, expect, type Page } from '@playwright/test';
 async function replaceSource(page: Page, text: string) {
   await page.locator('#editor .view-lines').click();
   await page.keyboard.press('ControlOrMeta+A');
+  // Delete first: inserting '{' over a selection would surround it.
+  await page.keyboard.press('Backspace');
   // insertText avoids Monaco's auto-closing brackets and indentation.
   await page.keyboard.insertText(text);
 }

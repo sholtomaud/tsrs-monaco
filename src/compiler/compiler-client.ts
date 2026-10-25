@@ -11,6 +11,8 @@ export class CompilerClient extends EventTarget {
   private worker!: Worker;
   private pending = new Map<number, Pending>();
   private nextId = 1;
+  private libraries: ProjectFiles = {};
+  private librariesKey = '';
   ready = false;
 
   constructor() {
@@ -24,6 +26,7 @@ export class CompilerClient extends EventTarget {
       new URL('./compiler.worker.ts', import.meta.url),
       { type: 'module' }
     );
+    this.worker.postMessage({ type: 'libraries', files: this.libraries });
     this.worker.onmessage = (event: MessageEvent<CompilerMessage>) => {
       const message = event.data;
       if (message.type === 'ready') {
@@ -51,11 +54,20 @@ export class CompilerClient extends EventTarget {
     };
   }
 
+  /** npm declaration files; only sent to the worker when the set changes. */
+  setLibraries(files: ProjectFiles) {
+    const key = Object.keys(files).sort().join('\n');
+    if (key === this.librariesKey) return;
+    this.librariesKey = key;
+    this.libraries = files;
+    this.worker.postMessage({ type: 'libraries', files });
+  }
+
   compile(files: ProjectFiles): Promise<CompileResult> {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      this.worker.postMessage({ id, files });
+      this.worker.postMessage({ type: 'compile', id, files });
     });
   }
 }

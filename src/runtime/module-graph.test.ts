@@ -113,3 +113,36 @@ describe('createLinker', () => {
     assert.deepStrictEqual(linked, ['model.js', 'a.test.js', 'b.test.js']);
   });
 });
+
+describe('external specifiers', () => {
+  test('maps bare imports and leaves unknown ones alone', () => {
+    const out: Record<string, string> = {};
+    createLinker(
+      {
+        'a.js': [
+          "import * as ort from 'onnxruntime-web';",
+          "import 'side-effect';",
+          "const tf = await import('@tensorflow/tfjs-core');",
+          "import x from 'https://example.com/x.js';",
+        ].join('\n'),
+      },
+      (path, code) => {
+        out[path] = code;
+        return path;
+      },
+      {
+        'onnxruntime-web': 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.bundle.min.mjs',
+        '@tensorflow/tfjs-core': 'https://esm.sh/@tensorflow/tfjs-core@4.22.0',
+      }
+    )('a.js');
+    assert.strictEqual(
+      out['a.js'],
+      [
+        "import * as ort from 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.bundle.min.mjs';",
+        "import 'side-effect';",
+        "const tf = await import('https://esm.sh/@tensorflow/tfjs-core@4.22.0');",
+        "import x from 'https://example.com/x.js';",
+      ].join('\n')
+    );
+  });
+});
