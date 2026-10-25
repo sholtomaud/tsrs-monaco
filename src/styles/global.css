@@ -1,0 +1,42 @@
+@import "tailwindcss";
+
+:root {
+  /* Boba Minimal / Professional Design System Tokens */
+  --boba-primary: #0f172a;
+  --boba-secondary: #475569;
+  --boba-accent: #334155;
+  --boba-accent-hover: #1e293b;
+  --boba-bg: #ffffff;
+  --boba-surface: #f8fafc;
+  --boba-border: #e2e8f0;
+  --boba-text: #0f172a;
+  --boba-text-muted: #64748b;
+  --boba-code-bg: #0f172a;
+  --boba-nav-bg: rgba(255, 255, 255, 0.9);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --boba-primary: #f8fafc;
+    --boba-secondary: #94a3b8;
+    --boba-accent: #475569;
+    --boba-accent-hover: #64748b;
+    --boba-bg: #0b0f17;
+    --boba-surface: #111827;
+    --boba-border: #1e293b;
+    --boba-text: #f1f5f9;
+    --boba-text-muted: #94a3b8;
+    --boba-code-bg: #0f172a;
+    --boba-nav-bg: rgba(11, 15, 23, 0.9);
+  }
+}
+
+body {
+  background-color: var(--boba-bg);
+  color: var(--boba-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  margin: 0;
+  padding: 0;
+}
