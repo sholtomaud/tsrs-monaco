@@ -1,0 +1,15 @@
+:host {
+  display: block;
+}
+
+:host .nav-link {
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.375rem;
+  color: var(--boba-text-muted);
+  transition: color 0.15s, background-color 0.15s;
+}
+:host .nav-link:hover,
+:host .nav-link[aria-current='page'] {
+  color: var(--boba-text);
+  background: var(--boba-surface);
+}

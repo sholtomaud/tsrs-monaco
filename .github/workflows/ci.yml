@@ -1,0 +1,46 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  get-playwright-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get Playwright version from package.json
+        id: get-version
+        run: |
+          VERSION=$(node -p "require('./package.json').devDependencies['@playwright/test'].replace(/[\^~]/g, '')")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+  test:
+    needs: get-playwright-version
+    runs-on: ubuntu-latest
+    container: mcr.microsoft.com/playwright:v${{ needs.get-playwright-version.outputs.version }}-noble
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js v25
+        uses: actions/setup-node@v4
+        with:
+          node-version: 25.x
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Unit Tests
+        run: npm test
+
+      - name: E2E Tests
+        run: npx playwright test

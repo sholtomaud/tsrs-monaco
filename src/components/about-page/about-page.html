@@ -1,0 +1,88 @@
+<div class="bg-[var(--boba-bg)] text-[var(--boba-text)] py-12 px-4 sm:px-6">
+  <article class="max-w-3xl mx-auto">
+    <header class="mb-10">
+      <h1 class="text-4xl font-extrabold tracking-tight mb-4">How it works</h1>
+      <p class="text-lg text-[var(--boba-text-muted)] leading-relaxed">
+        This playground type checks, compiles and runs TypeScript entirely in your browser. The compiler is
+        <a href="https://github.com/oxc-project/tsrs" target="_blank" rel="noopener noreferrer">tsrs</a>, a Rust port of
+        the TypeScript 7 compiler, shipped to the browser as <code>@tsrs/wasm</code>. Nothing is sent to a server.
+      </p>
+    </header>
+
+    <ol class="flow">
+      <li>
+        <h2>1. Monaco Editor</h2>
+        <p>
+          Each file in the project is a Monaco model. Monaco provides editing and syntax highlighting only: its bundled
+          TypeScript language service is deliberately left out so every diagnostic you see comes from tsrs.
+        </p>
+      </li>
+      <li>
+        <h2>2. Type check with <code>@tsrs/wasm</code></h2>
+        <p>
+          400 ms after you stop typing, the files are posted to a Web Worker that runs
+          <code>tsc(["-p", "/project/tsconfig.json"], &#123; files, diagnostics: "json" &#125;)</code> over an in-memory
+          file system. The standard library <code>.d.ts</code> files are bundled inside the wasm binary.
+        </p>
+      </li>
+      <li>
+        <h2>3. Diagnostics become markers</h2>
+        <p>
+          tsrs returns diagnostics with 0-based lines and UTF-16 columns; they are converted to Monaco's 1-based ranges
+          and set as markers, which draw the red squiggles and fill the Problems panel. Errors in
+          <code>tsconfig.json</code> are reported the same way.
+        </p>
+      </li>
+      <li>
+        <h2>4. Emit JavaScript</h2>
+        <p>
+          The same call emits JavaScript into <code>dist/</code> in memory. The JavaScript tab shows the output for the
+          file you are editing.
+        </p>
+      </li>
+      <li>
+        <h2>5. Run in a Web Worker</h2>
+        <p>
+          On Run, the emitted modules go to a fresh module worker. Each module becomes a Blob URL, dependencies first,
+          with relative imports such as <code>./greet.js</code> rewritten to their Blob URLs, then the entry is loaded
+          with <code>import()</code>. <code>console</code> output is forwarded back to the page. Stop (or the next Run)
+          terminates the worker, so an infinite loop can never freeze the editor.
+        </p>
+      </li>
+    </ol>
+
+    <section class="mt-12">
+      <h2 class="text-2xl font-bold mb-4">Compared with Vite</h2>
+      <div class="overflow-x-auto">
+        <table>
+          <thead>
+            <tr><th>Task</th><th>Vite (Node.js)</th><th>@tsrs/wasm (browser)</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Type checking</td><td>Delegated to <code>tsc --noEmit</code> or plugins</td><td>Runs in the browser, in a worker</td></tr>
+            <tr><td>TS → JS</td><td>esbuild / oxc strip types</td><td>tsrs emits <code>.js</code> in memory</td></tr>
+            <tr><td>Module resolution</td><td><code>node_modules</code> on disk</td><td>A virtual file map you supply</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="mt-12">
+      <h2 class="text-2xl font-bold mb-4">Limits</h2>
+      <ul class="list-disc pl-6 space-y-2 text-[var(--boba-text-muted)]">
+        <li>The wasm build is single-threaded and each instance is capped at 4 GiB of linear memory (wasm32).</li>
+        <li>Your code runs in a worker, so there is no DOM: the default <code>lib</code> is <code>esnext</code> + <code>webworker</code>.</li>
+        <li>
+          npm packages aren't resolved. To type check an import, add its declarations as a <code>.d.ts</code> file in
+          <code>src/</code>; absolute URL imports (e.g. from esm.sh) are left untouched at runtime.
+        </li>
+        <li>Circular imports between your files are not supported by the Blob URL linker.</li>
+      </ul>
+    </section>
+
+    <p class="mt-12 text-sm text-[var(--boba-text-muted)]">
+      Built with <a href="https://github.com/sholtomaud/boba" target="_blank" rel="noopener noreferrer">Boba</a>:
+      Custom Elements, a tiny router and an <code>EventTarget</code> store.
+    </p>
+  </article>
+</div>

@@ -1,0 +1,86 @@
+# Node.js
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Editor files
+.vscode/
+*.suo
+*.user
+*.sln
+*.tmp
+*.bak
+*.suo
+*.user
+*.sln
+*.tmp
+*.bak
+*.vbp
+*.ncb
+*.opt
+*.plg
+*.user
+*.scc
+*.vssscc
+
+# Testing
+/coverage/
+/test/reports/
+
+# IDE - specific files
+.idea/
+.DS_Store
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+*.err
+
+# Local configuration
+.env
+.env.*
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Docker
+Dockerfile*
+docker-compose.*.yml
+.dockerignore
+
+# Editor preferences
+.editorconfig
+.prettierrc
+
+# Build artifacts
+build/
+dist/
+
+# Temporary files
+*.pid
+*.lock
+
+# Session/State
+*.session
+
+# Compiled assets
+*.min.js
+*.min.css
+
+# Local storage
+*.sqlite
+*.db
+
+# IntelliJ IDEA
+*.iml
+
+# Domains
+DOMAIN_NAME_QUOTES.md
+# Playwright
+/test-results/
+/playwright-report/
