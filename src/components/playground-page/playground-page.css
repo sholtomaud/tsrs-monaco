@@ -132,6 +132,14 @@
   overflow: auto;
 }
 :host .panel[hidden] { display: none; }
+:host .preview-frame {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  background: #fff;
+}
+:host .preview-frame[data-loaded="false"] { display: none; }
+:host .preview-frame[data-loaded="true"] + .preview-empty { display: none; }
 :host .panel-caption {
   padding: 0.25rem 1rem;
   font-size: 0.75rem;

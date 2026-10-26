@@ -53,6 +53,16 @@ Background: [Cloudflare's TypeScript compiler in Rust](https://socket.dev/blog/c
     Console lists where each import came from.
   - Add a root `package.json` (via **+**) with `dependencies` to pin versions; otherwise imports use `latest`.
     Types and runtime always use the same resolved version.
+- **Web apps (Preview).** A project with an `index.html` is a web app: Run serves it in the **Preview** tab
+  instead of a worker. The *Web app: Boba template* example is [Boba's app
+  template](https://github.com/sholtomaud/boba/tree/main/template), type checked by tsrs. A service worker
+  (`public/preview-sw.js`) serves `preview/app/` from the Cache API, standing in for Vite: `src/a.ts` is served
+  as its emitted JavaScript (at `src/a.ts` and `src/a.js`), `public/` at the root, `?raw` imports as string
+  modules, and `import './a.css'` as a module that adds the stylesheet. Tailwind is compiled in the page by
+  `@tailwindcss/browser`, served from the playground. npm imports work as on Run, through an import map in
+  `index.html`; a build would bundle them into the app's own origin, so the preview adds just those CDN origins to
+  the app's Content-Security-Policy, if it has one. The app's console output, load errors and CSP violations
+  appear in the Console. Regenerate the example with `node scripts/sync-boba-example.mjs path/to/boba/template`.
 - **Persistence.** Files are saved to `localStorage`; Reset restores the current example.
 
 ## Source layout
@@ -64,6 +74,9 @@ src/
 │   ├── compiler-client.ts   # promise wrapper, restarts the worker if it crashes
 │   ├── diagnostics.ts       # tsrs diagnostics → Monaco ranges
 │   └── project.ts           # the virtual project and its default files
+├── preview/
+│   ├── site.ts              # a web app project → the files the Preview serves
+│   └── preview-client.ts    # registers public/preview-sw.js, publishes to the Cache API
 ├── runtime/
 │   ├── run.worker.ts        # executes emitted modules, forwards console output
 │   ├── module-graph.ts      # links modules as Blob URLs, dependencies first
@@ -88,6 +101,8 @@ src/
 | `npm start` / `npm run dev` | Vite dev server |
 | `npm run build` | Production build into `dist/` |
 | `npm test` | Unit tests (`node --test`, run directly on TypeScript) |
+| `npm run typecheck` | Type check with TypeScript 7 (`tsc -p .`) |
+| `npm run lint` | Lint with [oxlint](https://oxc.rs/docs/guide/usage/linter) |
 | `npm run e2e` | Playwright tests against the dev server and the production build |
 
 Requires Node.js 25+ (as Boba does). Pushes to `main` run CI and deploy `dist/` to GitHub Pages.
@@ -100,6 +115,9 @@ Requires Node.js 25+ (as Boba does). Pushes to `main` run CI and deploy `dist/` 
   afterwards). Libraries that need the DOM won't work, because code runs in a worker. Multi-threaded wasm (e.g.
   ONNX Runtime threads) needs a cross-origin isolated page, which GitHub Pages can't provide.
 - Circular imports between project files are not supported by the Blob URL linker.
+- The Preview runs on the playground's origin (its service worker must control the frame), so an app there can
+  reach the playground's page and storage. It needs HTTPS or localhost, and the scripts it adds to `index.html`
+  (import map, console bridge) need a CSP that allows inline scripts, as Boba's does.
 
 ## License
 

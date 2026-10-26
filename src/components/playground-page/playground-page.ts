@@ -2,10 +2,10 @@ import { BaseComponent } from '../../core/base-component.ts';
 import { monaco, languageOf } from '../../editor/monaco.ts';
 import { getCompiler } from '../../compiler/compiler.ts';
 import {
-  ENTRY,
   TEST_FILE,
   TSCONFIG,
   PROJECT_ROOT,
+  entryFile,
   isSourceFile,
   outputPathFor,
   type ProjectFiles,
@@ -27,12 +27,19 @@ import {
   projectImports,
 } from '../../packages/package-manager.ts';
 import type { Acquisition } from '../../packages/type-acquisition.ts';
+import { publish } from '../../preview/preview-client.ts';
+import {
+  INDEX_HTML,
+  contentSecurityPolicy,
+  importOrigins,
+  isWebApp,
+  type PreviewConsoleMessage,
+} from '../../preview/site.ts';
 import tsrsPackage from '@tsrs/wasm/package.json' with { type: 'json' };
 import template from './playground-page.html?raw';
 import style from './playground-page.css?raw';
 
 const CHECK_DELAY_MS = 400;
-const PROTECTED_FILES = new Set([TSCONFIG, ENTRY]);
 
 const MARKER_SEVERITY: Record<Severity, monaco.MarkerSeverity> = {
   error: monaco.MarkerSeverity.Error,
@@ -41,7 +48,7 @@ const MARKER_SEVERITY: Record<Severity, monaco.MarkerSeverity> = {
   hint: monaco.MarkerSeverity.Hint,
 };
 
-type Panel = 'console' | 'tests' | 'plot' | 'js' | 'problems';
+type Panel = 'console' | 'preview' | 'tests' | 'plot' | 'js' | 'problems';
 type Mode = RunRequest['mode'];
 type StatusState = 'loading' | 'ready' | 'busy' | 'error';
 
@@ -62,6 +69,12 @@ export class PlaygroundPageComponent extends BaseComponent {
   private plotted = false;
   private mode: Mode = 'run';
   private lastResult: CompileResult | null = null;
+  private previewSeq = 0;
+  private onPreviewMessage = (e: MessageEvent<PreviewConsoleMessage>) => {
+    const frame = this.$<HTMLIFrameElement>('#preview-frame');
+    if (e.source !== frame.contentWindow || e.data?.source !== 'tsrs-preview') return;
+    this.log(e.data.level, e.data.text);
+  };
   private onCompilerReady = (e: Event) => {
     if (this.lastResult) return;
     const ms = Math.round((e as CustomEvent<number>).detail);
@@ -124,6 +137,7 @@ export class PlaygroundPageComponent extends BaseComponent {
     );
 
     this.compiler.addEventListener('ready', this.onCompilerReady);
+    window.addEventListener('message', this.onPreviewMessage);
     this.setStatus('loading', 'Loading tsrs.wasm…');
     this.check();
   }
@@ -131,6 +145,7 @@ export class PlaygroundPageComponent extends BaseComponent {
   disconnectedCallback() {
     window.clearTimeout(this.checkTimer);
     this.compiler.removeEventListener('ready', this.onCompilerReady);
+    window.removeEventListener('message', this.onPreviewMessage);
     this.runner.stop();
     this.disposables.forEach((d) => d.dispose());
     this.models.forEach((m) => m.dispose());
@@ -161,9 +176,22 @@ export class PlaygroundPageComponent extends BaseComponent {
     this.models.set(path, model);
   }
 
+  private entry(): string {
+    return entryFile(playgroundStore.getState().files);
+  }
+
+  /** Files that can't be deleted: the project can't build without them. */
+  private isProtected(path: string): boolean {
+    return path === TSCONFIG || path === INDEX_HTML || path === this.entry();
+  }
+
   private openFile(path: string) {
-    const model = this.models.get(path) ?? this.models.get(ENTRY)!;
-    const active = this.models.get(path) ? path : ENTRY;
+    const active = this.models.has(path)
+      ? path
+      : this.models.has(this.entry())
+        ? this.entry()
+        : this.models.keys().next().value!;
+    const model = this.models.get(active)!;
     this.editor.setModel(model);
     playgroundStore.setState({ activeFile: active });
     this.renderTabs();
@@ -183,7 +211,7 @@ export class PlaygroundPageComponent extends BaseComponent {
       name.textContent = path;
       name.addEventListener('click', () => this.openFile(path));
       const close = tab.querySelector<HTMLElement>('.file-close')!;
-      if (PROTECTED_FILES.has(path)) close.remove();
+      if (this.isProtected(path)) close.remove();
       else close.addEventListener('click', () => this.deleteFile(path));
       container.appendChild(tab);
     }
@@ -219,7 +247,7 @@ export class PlaygroundPageComponent extends BaseComponent {
     playgroundStore.setState({ files });
     this.models.get(path)?.dispose();
     this.models.delete(path);
-    if (playgroundStore.getState().activeFile === path) this.openFile(ENTRY);
+    if (playgroundStore.getState().activeFile === path) this.openFile(this.entry());
     else this.renderTabs();
     this.scheduleCheck();
   }
@@ -430,7 +458,7 @@ export class PlaygroundPageComponent extends BaseComponent {
     }
     const target = isSourceFile(activeFile)
       ? outputPathFor(activeFile)
-      : outputPathFor(ENTRY);
+      : outputPathFor(this.entry());
     const js = this.lastResult.outputs[target];
     label.textContent =
       js === undefined ? `${target} was not emitted` : target;
@@ -446,13 +474,16 @@ export class PlaygroundPageComponent extends BaseComponent {
   }
 
   private async execute(result: CompileResult, mode: Mode) {
+    if (mode === 'run' && isWebApp(playgroundStore.getState().files)) {
+      return this.preview(result);
+    }
     const modules = Object.fromEntries(
       Object.entries(result.outputs).filter(([path]) => /\.(m|c)?js$/.test(path))
     );
     const entries =
       mode === 'test'
         ? Object.keys(modules).filter((path) => TEST_FILE.test(path)).sort()
-        : [outputPathFor(ENTRY)];
+        : [outputPathFor(this.entry())];
     const errors = result.diagnostics.filter((d) => d.category === 1).length;
     const despite = errors
       ? ` despite ${errors} type error${errors === 1 ? '' : 's'}`
@@ -526,6 +557,50 @@ export class PlaygroundPageComponent extends BaseComponent {
     });
   }
 
+  /** Serves the compiled web app to the Preview tab's iframe. */
+  private async preview(result: CompileResult) {
+    const seq = ++this.previewSeq;
+    const errors = result.diagnostics.filter((d) => d.category === 1).length;
+    this.runner.stop();
+    this.clearConsole();
+    this.log(
+      'system',
+      `▶ Previewing ${INDEX_HTML}${errors ? ` despite ${errors} type error${errors === 1 ? '' : 's'}` : ''}`
+    );
+    this.showPanel('preview');
+    try {
+      const { files } = playgroundStore.getState();
+      const modules = Object.fromEntries(
+        Object.entries(result.outputs).filter(([path]) => /\.(m|c)?js$/.test(path))
+      );
+      const imports = await this.packages.runtimeImports(
+        modules,
+        files,
+        this.acquisition.versions
+      );
+      if (seq !== this.previewSeq) return;
+      for (const [spec, url] of Object.entries(imports)) {
+        this.log('system', `↳ ${spec} from ${url}`);
+      }
+      if (Object.keys(imports).length && contentSecurityPolicy(files[INDEX_HTML] ?? '') !== null) {
+        this.log(
+          'system',
+          `↳ The preview's Content-Security-Policy also allows ${importOrigins(imports).join(' and ')}: a build would bundle these packages instead.`
+        );
+      }
+      const url = await publish(files, result.outputs, imports);
+      if (seq !== this.previewSeq) return;
+      const frame = this.$<HTMLIFrameElement>('#preview-frame');
+      // Reload in place so the app stays on the page it was showing.
+      if (frame.dataset.loaded === 'true') frame.contentWindow!.location.reload();
+      else frame.src = url;
+      frame.dataset.loaded = 'true';
+      this.$<HTMLButtonElement>('#stop').disabled = false;
+    } catch (error) {
+      this.log('error', `Preview failed: ${(error as Error).message}`);
+    }
+  }
+
   private addPlot(chart: Parameters<typeof renderChart>[0]) {
     const plots = this.$('#plots');
     const figure = document.createElement('figure');
@@ -557,7 +632,15 @@ export class PlaygroundPageComponent extends BaseComponent {
   }
 
   private stop() {
-    if (!this.runner.running) return;
+    const frame = this.$<HTMLIFrameElement>('#preview-frame');
+    if (frame.dataset.loaded === 'true') {
+      this.previewSeq++;
+      frame.removeAttribute('src');
+      frame.contentWindow?.location.replace('about:blank');
+      frame.dataset.loaded = 'false';
+    } else if (!this.runner.running) {
+      return;
+    }
     this.runner.stop();
     this.$<HTMLButtonElement>('#stop').disabled = true;
     this.log('system', '■ Stopped');

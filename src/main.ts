@@ -6,7 +6,7 @@ import './components/nav-page/nav-page.ts';
 const isGitHubPages = window.location.hostname.endsWith('.github.io');
 const pathSegments = window.location.pathname.split('/');
 const repoName = isGitHubPages && pathSegments.length > 1 && pathSegments[1] ? pathSegments[1] : null;
-(window as any).BOBA_BASE_URL = repoName ? `/${repoName}/` : '/';
+window.BOBA_BASE_URL = repoName ? `/${repoName}/` : '/';
 
 function getInitialAppPath() {
   const pathname = window.location.pathname;

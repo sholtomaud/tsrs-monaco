@@ -1,5 +1,5 @@
 import { Store } from '../core/store.ts';
-import { ENTRY, type ProjectFiles } from '../compiler/project.ts';
+import { entryFile, type ProjectFiles } from '../compiler/project.ts';
 import { DEFAULT_EXAMPLE, type Example } from '../examples/index.ts';
 
 const STORAGE_KEY = 'tsrs-monaco:project';
@@ -12,7 +12,7 @@ export interface PlaygroundState {
 }
 
 function fromExample(example: Example): PlaygroundState {
-  return { files: { ...example.files }, activeFile: ENTRY, exampleId: example.id };
+  return { files: { ...example.files }, activeFile: entryFile(example.files), exampleId: example.id };
 }
 
 function load(): PlaygroundState {
