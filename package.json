@@ -32,6 +32,7 @@
     "compression": "^1.8.2"
   },
   "dependencies": {
+    "@tailwindcss/browser": "^4.3.3",
     "@tsrs/wasm": "0.18.0-ts7.1.0-dev.20260929",
     "monaco-editor": "^0.57.0"
   }

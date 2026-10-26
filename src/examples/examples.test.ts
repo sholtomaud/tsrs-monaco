@@ -8,11 +8,12 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert';
 import { tsc } from '@tsrs/wasm';
 import { EXAMPLES } from './index.ts';
-import { ENTRY, PROJECT_ROOT, TEST_FILE, TSCONFIG, outputPathFor, toAbsolute, toRelative } from '../compiler/project.ts';
-import { createLinker } from '../runtime/module-graph.ts';
+import { PROJECT_ROOT, TEST_FILE, TSCONFIG, entryFile, outputPathFor, toAbsolute, toRelative } from '../compiler/project.ts';
+import { createLinker, dirname, joinPath, relativeImports } from '../runtime/module-graph.ts';
 import { expect } from '../runtime/expect.ts';
 import { toChart, type Chart, type PlotOptions, type Series } from '../runtime/chart.ts';
 import { projectImports } from '../packages/package-manager.ts';
+import { buildSite, isWebApp } from '../preview/site.ts';
 
 async function compile(files: Record<string, string>) {
   const absolute = Object.fromEntries(
@@ -52,8 +53,29 @@ for (const example of EXAMPLES) {
         compiled.diagnostics.map((d) => `${d.fileName}: ${d.text}`),
         []
       );
-      assert.ok(compiled.outputs[outputPathFor(ENTRY)], 'entry was emitted');
+      assert.ok(compiled.outputs[outputPathFor(entryFile(example.files))], 'entry was emitted');
     });
+
+    if (isWebApp(example.files)) {
+      // Web apps need a page, so they run in the Preview tab (covered by e2e).
+      test('every import in its preview site resolves', () => {
+        const site = buildSite(example.files, compiled.outputs, {
+          root: '/preview/app/',
+          tailwindUrl: '/tailwind.js',
+        });
+        const served = new Set(site.map((f) => f.path));
+        assert.ok(served.has(entryFile(example.files).replace(/\.ts$/, '.js')));
+        for (const file of site.filter((f) => f.path.endsWith('.js'))) {
+          for (const spec of relativeImports(file.body)) {
+            const target = joinPath(dirname(file.path), spec);
+            // import './a.css' is served as the module a.css?import.
+            const module = target.endsWith('.css') ? `${target}?import` : target;
+            assert.ok(served.has(module), `${file.path} imports ${spec}, which is not served`);
+          }
+        }
+      });
+      return;
+    }
 
     test('runs and its own tests pass', async (t) => {
       const charts: Chart[] = [];
@@ -66,7 +88,7 @@ for (const example of EXAMPLES) {
       t.mock.method(console, 'info', () => {});
 
       const link = linkerFor(compiled.outputs);
-      await import(link(outputPathFor(ENTRY)));
+      await import(link(outputPathFor(entryFile(example.files))));
       const testFiles = Object.keys(compiled.outputs).filter((p) => TEST_FILE.test(p));
       assert.ok(testFiles.length > 0, 'the example has tests');
       for (const file of testFiles) await import(link(file));

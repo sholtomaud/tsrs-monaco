@@ -35,6 +35,7 @@
     <section class="pane" aria-label="Output">
       <div class="tabs" role="tablist" aria-label="Output">
         <button class="tab" role="tab" data-panel="console" aria-selected="true">Console</button>
+        <button class="tab" role="tab" data-panel="preview" aria-selected="false">Preview</button>
         <button class="tab" role="tab" data-panel="tests" aria-selected="false">
           Tests <span id="test-count" class="badge" data-count="0">0</span>
         </button>
@@ -48,6 +49,12 @@
         <div id="console" class="console" aria-live="polite">
           <div class="console-line console-system">Press Run (Ctrl/⌘ + Enter) to compile with tsrs and execute the output in a Web Worker.</div>
         </div>
+      </div>
+      <div class="panel" data-panel="preview" hidden>
+        <!-- Same origin, so its service worker can serve it: a web app here can
+             reach the playground's page, as code run in your own browser can. -->
+        <iframe id="preview-frame" class="preview-frame" title="Preview" data-loaded="false"></iframe>
+        <p class="panel-caption preview-empty">Projects with an index.html, like the Boba template example, open here when you press Run.</p>
       </div>
       <div class="panel" data-panel="tests" hidden>
         <div id="test-summary" class="panel-caption">Press Test to run the project's *.test.ts files with test() and expect().</div>

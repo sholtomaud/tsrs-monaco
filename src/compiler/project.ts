@@ -46,3 +46,11 @@ export function outputPathFor(source: string): string {
 export function isSourceFile(path: string): boolean {
   return /\.(m|c)?(t|j)sx?$/.test(path) && !path.endsWith('.d.ts');
 }
+
+/** The file Run starts from: src/index.ts, or src/main.ts in a Boba/Vite app. */
+export function entryFile(files: ProjectFiles): string {
+  for (const candidate of [ENTRY, 'src/main.ts']) {
+    if (candidate in files) return candidate;
+  }
+  return Object.keys(files).find(isSourceFile) ?? ENTRY;
+}
