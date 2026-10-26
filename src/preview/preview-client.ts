@@ -44,7 +44,8 @@ async function activeWorker(): Promise<ServiceWorkerRegistration> {
 /** Replaces the preview's files and returns the URL to load it from. */
 export async function publish(
   files: ProjectFiles,
-  outputs: Record<string, string>
+  outputs: Record<string, string>,
+  imports: Record<string, string>
 ): Promise<string> {
   registration ??= activeWorker().catch((error) => {
     registration = null;
@@ -57,6 +58,7 @@ export async function publish(
   const site = buildSite(files, outputs, {
     root,
     tailwindUrl: new URL(tailwindUrl, location.href).href,
+    imports,
   });
   await caches.delete(CACHE);
   const cache = await caches.open(CACHE);

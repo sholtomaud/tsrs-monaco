@@ -1,12 +1,25 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert';
-import { buildSite, contentTypeOf, isWebApp, servedPathFor, type SiteFile } from './site.ts';
+import {
+  allowOrigins,
+  buildSite,
+  contentSecurityPolicy,
+  contentTypeOf,
+  importOrigins,
+  isWebApp,
+  servedPathFor,
+  type SiteFile,
+} from './site.ts';
 
 const options = { root: '/base/preview/app/', tailwindUrl: '/assets/tailwind.js' };
 
-function site(files: Record<string, string>, outputs: Record<string, string> = {}) {
+function site(
+  files: Record<string, string>,
+  outputs: Record<string, string> = {},
+  imports: Record<string, string> = {}
+) {
   const map = new Map<string, SiteFile>();
-  for (const file of buildSite(files, outputs, options)) map.set(file.path, file);
+  for (const file of buildSite(files, outputs, { ...options, imports })) map.set(file.path, file);
   return map;
 }
 
@@ -88,5 +101,63 @@ describe('preview site', () => {
   test('guesses content types from extensions', () => {
     assert.strictEqual(contentTypeOf('a.CSS'), 'text/css;charset=utf-8');
     assert.strictEqual(contentTypeOf('a.bin'), 'application/octet-stream');
+  });
+
+  describe('npm packages', () => {
+    const imports = {
+      'split-lib': 'https://esm.sh/split-lib@0.3.0',
+      'tiny-ml': 'https://cdn.jsdelivr.net/npm/tiny-ml@2.1.0/dist/tiny-ml.bundle.mjs',
+    };
+    const csp =
+      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';";
+    const html = `<head><meta http-equiv="Content-Security-Policy" content="${csp}" /><script type="module" src="src/main.ts"></script></head>`;
+
+    test('adds an import map before the module scripts', () => {
+      const body = site({ 'index.html': html }, {}, imports).get('index.html')!.body;
+      const map = /<script type="importmap">(.*?)<\/script>/.exec(body);
+      assert.ok(map);
+      assert.deepStrictEqual(JSON.parse(map[1]), { imports });
+      assert.ok(map.index < body.indexOf('type="module"'));
+    });
+
+    test('adds no import map without npm imports', () => {
+      const body = site({ 'index.html': html }).get('index.html')!.body;
+      assert.ok(!body.includes('importmap'));
+      assert.strictEqual(contentSecurityPolicy(body), csp);
+    });
+
+    test("allows the CDNs in index.html's Content-Security-Policy", () => {
+      const body = site({ 'index.html': html }, {}, imports).get('index.html')!.body;
+      assert.strictEqual(
+        contentSecurityPolicy(body),
+        "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://esm.sh; " +
+          "style-src 'self' 'unsafe-inline'; connect-src 'self' https://cdn.jsdelivr.net https://esm.sh;"
+      );
+    });
+
+    test('lists the origins packages load from', () => {
+      assert.deepStrictEqual(importOrigins(imports), ['https://cdn.jsdelivr.net', 'https://esm.sh']);
+    });
+
+    test('only touches script and connect sources', () => {
+      assert.strictEqual(
+        allowOrigins("script-src 'none'; connect-src https://esm.sh; img-src 'self'", ['https://esm.sh']),
+        "script-src https://esm.sh; connect-src https://esm.sh; img-src 'self';"
+      );
+      // Without script-src or default-src, scripts are already unrestricted.
+      assert.strictEqual(allowOrigins("img-src 'self'", ['https://esm.sh']), "img-src 'self';");
+      assert.strictEqual(
+        allowOrigins("default-src 'self'; script-src-elem 'self'", ['https://esm.sh']),
+        "default-src 'self'; script-src-elem 'self' https://esm.sh; script-src 'self' https://esm.sh; connect-src 'self' https://esm.sh;"
+      );
+    });
+
+    test('reads the policy whatever the attribute order', () => {
+      assert.strictEqual(
+        contentSecurityPolicy(`<meta content="default-src 'self'" http-equiv='content-security-policy'>`),
+        "default-src 'self'"
+      );
+      assert.strictEqual(contentSecurityPolicy('<meta charset="utf-8">'), null);
+    });
   });
 });

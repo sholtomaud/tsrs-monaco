@@ -10,6 +10,9 @@
 // - index.html gains a <base> for the preview's path, the app's base URL for
 //   Boba's router, a bridge sending console output to the playground, and
 //   Tailwind's in-browser build when a stylesheet imports tailwindcss.
+// - npm packages: an import map points bare imports at CDN URLs. A build
+//   would bundle them into the app's own origin, so the preview adds just
+//   those CDN origins to index.html's Content-Security-Policy, if it has one.
 
 import { isSourceFile, outputPathFor, type ProjectFiles } from '../compiler/project.ts';
 
@@ -27,6 +30,8 @@ export interface SiteOptions {
   root: string;
   /** URL of @tailwindcss/browser, served by the playground. */
   tailwindUrl: string;
+  /** Bare specifiers ('lodash-es') to the URLs to import them from. */
+  imports?: Record<string, string>;
 }
 
 /** Message the console bridge posts to the playground. */
@@ -89,6 +94,8 @@ const CONSOLE_BRIDGE = `(() => {
     else send('error', ['Failed to load ' + (el.src || el.href || el.tagName)]);
   }, true);
   addEventListener('unhandledrejection', (e) => send('error', ['Uncaught (in promise)', e.reason]));
+  addEventListener('securitypolicyviolation', (e) =>
+    send('error', ['Content-Security-Policy (' + e.effectiveDirective + ') blocked ' + (e.blockedURI || 'inline code')]));
 })();`;
 
 function stylesheetModule(css: string): string {
@@ -103,6 +110,47 @@ document.head.append(style);
 
 const scriptLiteral = (value: string) =>
   JSON.stringify(value).replace(/</g, '\\u003c');
+
+/** The origins `imports` load from, e.g. https://esm.sh. */
+export function importOrigins(imports: Record<string, string>): string[] {
+  return [...new Set(Object.values(imports).map((url) => new URL(url).origin))].sort();
+}
+
+const CSP_META = /<meta\b[^>]*\bhttp-equiv\s*=\s*["']?content-security-policy\b[^>]*>/i;
+const CONTENT_ATTR = /(\bcontent\s*=\s*)(["'])([\s\S]*?)\2/i;
+
+/** The policy in index.html's Content-Security-Policy <meta>, if any. */
+export function contentSecurityPolicy(html: string): string | null {
+  const meta = CSP_META.exec(html);
+  return meta ? (CONTENT_ATTR.exec(meta[0])?.[3] ?? null) : null;
+}
+
+/**
+ * Adds `origins` to the policy's script-src and connect-src (module imports
+ * and the fetches packages make for their own files, like .wasm), creating
+ * them from default-src where the policy relies on it.
+ */
+export function allowOrigins(policy: string, origins: string[]): string {
+  const directives = policy
+    .split(';')
+    .map((d) => d.trim().split(/\s+/))
+    .filter((d) => d[0]);
+  const find = (name: string) => directives.find((d) => d[0].toLowerCase() === name);
+  const fallback = find('default-src');
+  for (const name of ['script-src', 'script-src-elem', 'connect-src']) {
+    let directive = find(name);
+    if (!directive) {
+      // script-src-elem falls back to script-src, which is handled anyway.
+      if (name === 'script-src-elem' || !fallback) continue;
+      directive = [name, ...fallback.slice(1)];
+      directives.push(directive);
+    }
+    const sources = directive.filter((s, i) => i === 0 || s !== "'none'");
+    for (const origin of origins) if (!sources.includes(origin)) sources.push(origin);
+    directive.splice(0, directive.length, ...sources);
+  }
+  return `${directives.map((d) => d.join(' ')).join('; ')};`;
+}
 
 function injectIntoHead(html: string, markup: string): string {
   const head = /<head(\s[^>]*)?>/i.exec(html);
@@ -145,15 +193,33 @@ export function buildSite(
     }
   }
 
+  const imports = options.imports ?? {};
+  const hasImports = Object.keys(imports).length > 0;
+  let html = files[INDEX_HTML] ?? '';
+  if (hasImports) {
+    const origins = importOrigins(imports);
+    html = html.replace(CSP_META, (meta) =>
+      meta.replace(
+        CONTENT_ATTR,
+        (_, attr: string, quote: string, policy: string) =>
+          `${attr}${quote}${allowOrigins(policy, origins)}${quote}`
+      )
+    );
+  }
+
   const head = [
     `<base href="${options.root}" />`,
+    // Before any module script, which an import map has to be.
+    hasImports
+      ? `<script type="importmap">${JSON.stringify({ imports }).replace(/</g, '\\u003c')}</script>`
+      : '',
     `<script>window.BOBA_BASE_URL = ${scriptLiteral(options.root)};\n${CONSOLE_BRIDGE}</script>`,
     usesTailwind ? `<script src="${options.tailwindUrl}"></script>` : '',
   ].filter(Boolean);
   site.push({
     path: INDEX_HTML,
     contentType: contentTypeOf(INDEX_HTML),
-    body: injectIntoHead(files[INDEX_HTML] ?? '', `${head.join('\n')}\n`),
+    body: injectIntoHead(html, `${head.join('\n')}\n`),
   });
   return site;
 }

@@ -59,8 +59,10 @@ Background: [Cloudflare's TypeScript compiler in Rust](https://socket.dev/blog/c
   (`public/preview-sw.js`) serves `preview/app/` from the Cache API, standing in for Vite: `src/a.ts` is served
   as its emitted JavaScript (at `src/a.ts` and `src/a.js`), `public/` at the root, `?raw` imports as string
   modules, and `import './a.css'` as a module that adds the stylesheet. Tailwind is compiled in the page by
-  `@tailwindcss/browser`, served from the playground. The app's console output and load errors appear in the
-  Console. Regenerate the example with `node scripts/sync-boba-example.mjs path/to/boba/template`.
+  `@tailwindcss/browser`, served from the playground. npm imports work as on Run, through an import map in
+  `index.html`; a build would bundle them into the app's own origin, so the preview adds just those CDN origins to
+  the app's Content-Security-Policy, if it has one. The app's console output, load errors and CSP violations
+  appear in the Console. Regenerate the example with `node scripts/sync-boba-example.mjs path/to/boba/template`.
 - **Persistence.** Files are saved to `localStorage`; Reset restores the current example.
 
 ## Source layout
@@ -114,7 +116,8 @@ Requires Node.js 25+ (as Boba does). Pushes to `main` run CI and deploy `dist/` 
   ONNX Runtime threads) needs a cross-origin isolated page, which GitHub Pages can't provide.
 - Circular imports between project files are not supported by the Blob URL linker.
 - The Preview runs on the playground's origin (its service worker must control the frame), so an app there can
-  reach the playground's page and storage. It doesn't load npm packages yet, and it needs HTTPS or localhost.
+  reach the playground's page and storage. It needs HTTPS or localhost, and the scripts it adds to `index.html`
+  (import map, console bridge) need a CSP that allows inline scripts, as Boba's does.
 
 ## License
 

@@ -30,6 +30,8 @@ import type { Acquisition } from '../../packages/type-acquisition.ts';
 import { publish } from '../../preview/preview-client.ts';
 import {
   INDEX_HTML,
+  contentSecurityPolicy,
+  importOrigins,
   isWebApp,
   type PreviewConsoleMessage,
 } from '../../preview/site.ts';
@@ -567,7 +569,26 @@ export class PlaygroundPageComponent extends BaseComponent {
     );
     this.showPanel('preview');
     try {
-      const url = await publish(playgroundStore.getState().files, result.outputs);
+      const { files } = playgroundStore.getState();
+      const modules = Object.fromEntries(
+        Object.entries(result.outputs).filter(([path]) => /\.(m|c)?js$/.test(path))
+      );
+      const imports = await this.packages.runtimeImports(
+        modules,
+        files,
+        this.acquisition.versions
+      );
+      if (seq !== this.previewSeq) return;
+      for (const [spec, url] of Object.entries(imports)) {
+        this.log('system', `↳ ${spec} from ${url}`);
+      }
+      if (Object.keys(imports).length && contentSecurityPolicy(files[INDEX_HTML] ?? '') !== null) {
+        this.log(
+          'system',
+          `↳ The preview's Content-Security-Policy also allows ${importOrigins(imports).join(' and ')}: a build would bundle these packages instead.`
+        );
+      }
+      const url = await publish(files, result.outputs, imports);
       if (seq !== this.previewSeq) return;
       const frame = this.$<HTMLIFrameElement>('#preview-frame');
       // Reload in place so the app stays on the page it was showing.
