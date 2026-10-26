@@ -1,22 +1,55 @@
+export type RouteParams = Record<string, string>;
+export type RouteQuery = Record<string, string>;
+
+export interface RouteLocation {
+  path: string;
+  params: RouteParams;
+  query: RouteQuery;
+}
+
+// Return false to cancel navigation, a path string to redirect, or
+// true/undefined to continue.
+export type RouteGuard = (
+  to: RouteLocation
+) => boolean | string | void | Promise<boolean | string | void>;
+
+export interface RouteDefinition {
+  path: string;
+  component: string;
+  beforeEnter?: RouteGuard;
+}
+
+interface RegisteredRoute extends RouteDefinition {
+  regex: RegExp;
+  paramNames: string[];
+}
+
+interface RouteMatch {
+  route: RegisteredRoute;
+  params: RouteParams;
+}
+
+type RoutedElement = HTMLElement & { params?: RouteParams; query?: RouteQuery };
+
 export class Router {
-  static instance;
-  routes = [];
+  static instance: Router | undefined;
+  routes: RegisteredRoute[] = [];
   currentPath = '';
 
   constructor() {
     window.addEventListener('popstate', this.handleRoute.bind(this));
   }
 
-  static getInstance() {
+  static getInstance(): Router {
     if (!Router.instance) {
       Router.instance = new Router();
     }
     return Router.instance;
   }
 
-  getAppPath() {
+  getAppPath(): string {
     const pathname = window.location.pathname;
-    const BASE_URL = (window as any).BOBA_BASE_URL || '/';
+    const BASE_URL = window.BOBA_BASE_URL || '/';
     const normalizedBaseUrl =
       BASE_URL.endsWith('/') || BASE_URL === '/' ? BASE_URL : BASE_URL + '/';
 
@@ -30,28 +63,34 @@ export class Router {
       }
       return (appPath === '' ? '/' : appPath) + window.location.search;
     }
-    return (pathname.startsWith('/') ? pathname : '/' + pathname) + window.location.search;
+    return (
+      (pathname.startsWith('/') ? pathname : '/' + pathname) +
+      window.location.search
+    );
   }
 
-  registerRoute(route) {
+  registerRoute(route: RouteDefinition): void {
     const normalizedPath = route.path.startsWith('/')
       ? route.path
       : '/' + route.path;
 
     // Convert path like '/user/:id' to a regex and extract parameter names
-    const paramNames = [];
-    const regexSource = normalizedPath.replace(/:([^\/]+)/g, (_, paramName) => {
-      paramNames.push(paramName);
-      return '([^\\/]+)';
-    });
+    const paramNames: string[] = [];
+    const regexSource = normalizedPath.replace(
+      /:([^/]+)/g,
+      (_, paramName: string) => {
+        paramNames.push(paramName);
+        return '([^\\/]+)';
+      }
+    );
 
     const regex = new RegExp(`^${regexSource}$`);
     this.routes.push({ ...route, path: normalizedPath, regex, paramNames });
   }
 
-  navigate(appPath) {
+  navigate(appPath: string): void {
     const pathAndQuery = appPath.startsWith('/') ? appPath : '/' + appPath;
-    const BASE_URL = (window as any).BOBA_BASE_URL || '/';
+    const BASE_URL = window.BOBA_BASE_URL || '/';
 
     const [pathPart, queryString] = pathAndQuery.split('?');
     const dummyAbsoluteBase = 'http://dummy';
@@ -68,17 +107,17 @@ export class Router {
     this.handleRoute();
   }
 
-  async handleRoute() {
+  async handleRoute(): Promise<void> {
     const appPathToMatch = this.getAppPath();
     const [pathPart, queryString] = appPathToMatch.split('?');
-    
+
     const searchParams = new URLSearchParams(queryString || '');
     const query = Object.fromEntries(searchParams.entries());
 
     const match = this.findRoute(pathPart);
 
     if (match) {
-      const to = { path: pathPart, params: match.params, query };
+      const to: RouteLocation = { path: pathPart, params: match.params, query };
 
       if (match.route.beforeEnter) {
         const guardResult = await match.route.beforeEnter(to);
@@ -100,23 +139,25 @@ export class Router {
     }
   }
 
-  findRoute(path) {
+  findRoute(path: string): RouteMatch | null {
     for (const route of this.routes) {
-      const match = path.match(route.regex || new RegExp(`^${route.path}$`));
+      const match = path.match(route.regex);
       if (match) {
-        const params = {};
-        if (route.paramNames) {
-          route.paramNames.forEach((name, index) => {
-            params[name] = decodeURIComponent(match[index + 1]);
-          });
-        }
+        const params: RouteParams = {};
+        route.paramNames.forEach((name, index) => {
+          params[name] = decodeURIComponent(match[index + 1]);
+        });
         return { route, params };
       }
     }
     return null;
   }
 
-  async loadComponent(tagName, params = {}, query = {}) {
+  async loadComponent(
+    tagName: string,
+    params: RouteParams = {},
+    query: RouteQuery = {}
+  ): Promise<void> {
     const outlet = document.querySelector('#router-outlet');
     if (!outlet) return;
 
@@ -125,10 +166,10 @@ export class Router {
         await import(`../../components/${tagName}/${tagName}.ts`);
       }
 
-      const element = document.createElement(tagName);
+      const element: RoutedElement = document.createElement(tagName);
       Object.assign(element, params);
-      (element as any).params = params;
-      (element as any).query = query;
+      element.params = params;
+      element.query = query;
 
       outlet.innerHTML = '';
       outlet.appendChild(element);
@@ -138,7 +179,7 @@ export class Router {
     }
   }
 
-  show404() {
+  show404(): void {
     const outlet = document.querySelector('#router-outlet');
     if (outlet) {
       outlet.innerHTML = '<h1>404 - Page Not Found</h1>';

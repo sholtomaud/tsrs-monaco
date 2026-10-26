@@ -115,7 +115,7 @@ export function browserEntry(pkg: PackageJson, subpath: string): string | null {
   const exported = resolveExports(pkg, subpath, BROWSER_CONDITIONS);
   if (exported !== undefined) return exported;
   if (subpath) return subpath.slice(1);
-  if (typeof pkg.browser === 'string' && /\.mjs$/.test(pkg.browser)) return clean(pkg.browser);
+  if (typeof pkg.browser === 'string' && pkg.browser.endsWith('.mjs')) return clean(pkg.browser);
   return pkg.module ? clean(pkg.module) : null;
 }
 

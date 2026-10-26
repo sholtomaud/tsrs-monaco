@@ -88,6 +88,8 @@ src/
 | `npm start` / `npm run dev` | Vite dev server |
 | `npm run build` | Production build into `dist/` |
 | `npm test` | Unit tests (`node --test`, run directly on TypeScript) |
+| `npm run typecheck` | Type check with TypeScript 7 (`tsc -p .`) |
+| `npm run lint` | Lint with [oxlint](https://oxc.rs/docs/guide/usage/linter) |
 | `npm run e2e` | Playwright tests against the dev server and the production build |
 
 Requires Node.js 25+ (as Boba does). Pushes to `main` run CI and deploy `dist/` to GitHub Pages.
