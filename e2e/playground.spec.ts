@@ -147,3 +147,36 @@ test('Odum CASH example simulates, plots and passes its tests', async ({ page })
   await page.reload();
   await expect(page.locator('#example')).toHaveValue('odum-cash');
 });
+
+test('Energy flows example runs its WGSL kernels and passes its tests', async ({ page }) => {
+  // SwiftShader runs the kernels on the CPU, slowly.
+  test.setTimeout(180_000);
+  // WebGPU, when this browser has an adapter (SwiftShader in playwright.config.js).
+  const webgpu = await page.evaluate(async () => !!(await navigator.gpu?.requestAdapter()));
+  page.on('dialog', (dialog) => dialog.accept());
+  await page.locator('#example').selectOption('energy-flows');
+  await expect(page.locator('.file-tab[data-file="src/ecosystem.ts"]')).toBeVisible();
+  await waitForCheck(page);
+  await expect(page.locator('#status')).toHaveText('No type errors');
+
+  await page.locator('#run').click();
+  await expect(page.locator('#plots svg')).toHaveCount(3, { timeout: 60_000 });
+  await expect(page.locator('#plots')).toContainText('Atwood machine at steady speed');
+  await page.locator('[data-panel="console"][role="tab"]').click();
+  const output = page.locator('#console');
+  await expect(output).toContainText(webgpu ? 'Running on WebGPU' : 'Running on CPU reference');
+  await expect(output).toContainText('maximum power 2.406 W at R = 0.50, efficiency 50%');
+  await expect(output).toContainText('hub efficiency 98.98%, peak 1778 W at 129 rpm');
+  // The steady-state flow matrix A reproduces the Silver Springs budget.
+  await expect(output).toContainText(/1 producers\s+0\s+3368\s+0\s+0\s+3000\s+14442/);
+
+  // The CPU tests, plus GPU-vs-CPU checks of each kernel where there's WebGPU.
+  await page.locator('#test').click();
+  await expect(page.locator('#test-summary')).toContainText(
+    webgpu ? '30 passed, 0 failed' : '26 passed, 0 failed',
+    { timeout: 120_000 }
+  );
+  if (webgpu) {
+    await expect(page.locator('#tests')).toContainText('ecosystem kernel: GPU matches CPU, A and all');
+  }
+});
