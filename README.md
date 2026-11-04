@@ -140,7 +140,7 @@ examples/energy-flows/src/   # bundled into src/examples/energy-flows.ts
 | `npm run e2e` | Playwright tests against the dev server and the production build |
 | `node scripts/sync-example.mjs <name>` | Bundle `examples/<name>/` into `src/examples/<name>.ts` |
 
-Requires Node.js 25+ (as Boba does). Pushes to `main` run CI and deploy `dist/` to GitHub Pages.
+Requires Node.js 25+ (as Boba does). Pull requests run CI; pushes to `main` run the same tests and deploy `dist/` to GitHub Pages.
 
 ## Limits
 
