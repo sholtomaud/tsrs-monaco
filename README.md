@@ -42,6 +42,25 @@ Background: [Cloudflare's TypeScript compiler in Rust](https://socket.dev/blog/c
   and runs its tests, so a broken example fails CI. The npm examples need the network, so they are checked by
   `LIVE_CDN=1 npx playwright test e2e/npm-examples.live.spec.ts` instead; the regular e2e suite tests npm support
   against a mocked CDN.
+- **Energy flows: WebGPU physics.** Phase 1 of a WebGPU physics and ecology toolkit: WGSL compute kernels,
+  integrated with forward Euler, for three energy-flow models. Each runs on the GPU when the browser has WebGPU
+  (Chrome, Edge) and on a CPU twin of the same kernel otherwise, which reads the same packed buffers.
+  - *Atwood machine* (Odum & Pinkerton, 1955): one thread per load ratio R = M2/M1. With friction proportional to
+    speed, the steady useful power R(1 − R)M1²g²/b peaks at R = ½, where the efficiency is 50%. The pulley turns
+    by quaternion (`q_update`, `q_multiply`, `q_normalize` in WGSL).
+  - *Bicycle hub* (Gardner et al., 2007; Wu & Cheng, 2014): one thread per cadence. The rider's torque
+    T = T_max − a·PR drives a planetary hub whose speeds and torques come from 3×3 fundamental-circuit and
+    latent-power systems, with gear-mesh losses. Power peaks at T_max/2a in every gear.
+  - *Ecosystem* (Li et al., 2010; Collins & Odum, 2000): one workgroup per network integrates dx/dt = Cx + u on
+    flat N×N arrays (N ≤ 32) to steady state, then writes the flow matrix A (a_ij = flow from i to j) to the output
+    buffer, the hand-off to Phase 2 (emergy). Networks are written in a small linear dialect in a tagged template,
+    `ecosystem\`producers -> herbivores = 0.1 * producers\``, parsed into C and u with line:column errors.
+    The example is Odum's Silver Springs budget, and a sweep of its grazing.
+
+  The example lives as real files in `examples/energy-flows/`; `node scripts/sync-example.mjs energy-flows`
+  bundles them into `src/examples/energy-flows.ts` (`npm test` fails if it's stale). Its tests run in CI under
+  Node (CPU), and the e2e suite runs them in Chromium on a SwiftShader WebGPU adapter, including GPU-vs-CPU checks
+  of each kernel.
 - **npm packages.** Type `import * as ort from 'onnxruntime-web'` and it just works:
   - *Types:* the playground resolves the version on jsDelivr, then follows the package's declaration files
     (relative imports, other packages, `/// <reference>`, falling back to `@types/*`) and fetches only the `.d.ts`
@@ -85,13 +104,28 @@ src/
 │   ├── chart.ts             # plot() data and SVG rendering
 │   └── runner.ts            # one worker per run, stop()
 ├── packages/                # npm: type acquisition, CDN URLs, package.json resolution
-├── examples/                # example projects (+ a test that compiles and runs them)
+├── examples/                # example projects (+ a test that compiles and runs them;
+│                            #   energy-flows.ts is generated from /examples/energy-flows)
 ├── editor/monaco.ts         # Monaco set-up (features, languages, workers, theme)
 ├── store/playground-store.ts
 └── components/
     ├── playground-page/     # editor, file tabs, Console / JavaScript / Problems
     ├── about-page/          # "How it works"
     └── nav-page/
+```
+
+```
+examples/energy-flows/src/   # bundled into src/examples/energy-flows.ts
+├── engine.ts         # WebGPU engine (one binding layout: params, input, state, output) + CPU fallback
+├── quaternion.ts     # WGSL q_multiply / q_normalize / q_update, and their CPU twins
+├── matrix.ts         # WGSL flat N×N matrices in workgroup memory, Gaussian elimination
+├── atwood.ts         # spec B kernel
+├── bicycle.ts        # spec A kernel: planetary hub transmission matrix + spin-up
+├── ecosystem.ts      # spec C kernel: one workgroup per network → steady-state A
+├── dialect.ts        # the network dialect → C, u, x0
+├── flows.ts          # EnergyFlows (the Phase 2 hand-off), held in memory by name
+├── silver-springs.ts # Odum's Silver Springs budget, in the dialect
+└── *.test.ts         # CPU tests; webgpu.test.ts checks each kernel on the GPU
 ```
 
 ## Scripts
@@ -104,6 +138,7 @@ src/
 | `npm run typecheck` | Type check with TypeScript 7 (`tsc -p .`) |
 | `npm run lint` | Lint with [oxlint](https://oxc.rs/docs/guide/usage/linter) |
 | `npm run e2e` | Playwright tests against the dev server and the production build |
+| `node scripts/sync-example.mjs <name>` | Bundle `examples/<name>/` into `src/examples/<name>.ts` |
 
 Requires Node.js 25+ (as Boba does). Pushes to `main` run CI and deploy `dist/` to GitHub Pages.
 

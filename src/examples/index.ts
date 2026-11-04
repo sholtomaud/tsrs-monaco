@@ -1,5 +1,6 @@
 import type { ProjectFiles } from '../compiler/project.ts';
 import * as bobaApp from './boba-app.ts';
+import * as energyFlows from './energy-flows.ts';
 import * as hello from './hello.ts';
 import * as odumCash from './odum-cash.ts';
 import * as onnxRuntime from './onnx-runtime.ts';
@@ -14,6 +15,7 @@ export interface Example {
 export const EXAMPLES: Example[] = [
   { id: 'hello', title: 'Hello, types', files: hello.files },
   { id: 'odum-cash', title: 'Odum: CASH money storage', files: odumCash.files },
+  { id: 'energy-flows', title: 'Energy flows: WebGPU physics', files: energyFlows.files },
   { id: 'onnx-runtime', title: 'npm: ONNX Runtime Web', files: onnxRuntime.files },
   { id: 'tfjs-webgpu', title: 'npm: TensorFlow.js + WebGPU', files: tfjsWebgpu.files },
   { id: 'boba-app', title: 'Web app: Boba template (Preview)', files: bobaApp.files },

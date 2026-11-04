@@ -6,6 +6,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert';
+import fs from 'node:fs';
 import { tsc } from '@tsrs/wasm';
 import { EXAMPLES } from './index.ts';
 import { PROJECT_ROOT, TEST_FILE, TSCONFIG, entryFile, outputPathFor, toAbsolute, toRelative } from '../compiler/project.ts';
@@ -101,6 +102,25 @@ for (const example of EXAMPLES) {
         assert.strictEqual(charts.length, 1);
         assert.strictEqual(charts[0].series[0].points.length, 241);
       }
+      if (example.id === 'energy-flows') {
+        // Atwood power vs R, bicycle power vs cadence (3 gears), the grazing sweep.
+        assert.deepStrictEqual(charts.map((c) => c.series.length), [2, 3, 3]);
+        assert.strictEqual(charts[0].series[0].points.length, 101);
+      }
     });
+  });
+}
+
+// Examples kept as real files under examples/<name>/ are bundled into
+// src/examples/<name>.ts by scripts/sync-example.mjs.
+const examplesDir = new URL('../../examples/', import.meta.url);
+for (const name of fs.existsSync(examplesDir) ? fs.readdirSync(examplesDir) : []) {
+  test(`src/examples/${name}.ts is in sync with examples/${name}/`, async () => {
+    // @ts-expect-error: a plain JavaScript script, without type declarations
+    const { bundle, outputFor } = await import('../../scripts/sync-example.mjs');
+    assert.ok(
+      fs.readFileSync(outputFor(name), 'utf8') === bundle(name),
+      `run: node scripts/sync-example.mjs ${name}`
+    );
   });
 }

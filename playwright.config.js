@@ -35,7 +35,11 @@ function fallbackChromium() {
 }
 
 const executablePath = fallbackChromium();
-const launchOptions = executablePath ? { executablePath } : {};
+// WebGPU on SwiftShader, Chromium's software Vulkan, so the energy-flows
+// example's WGSL kernels run on a real WebGPU adapter even on a headless CI
+// machine without a GPU.
+const webgpu = ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader', '--enable-features=Vulkan'];
+const launchOptions = { args: webgpu, ...(executablePath ? { executablePath } : {}) };
 
 
 export default defineConfig({
