@@ -1,10 +1,9 @@
 import { BaseComponent } from '../../core/base-component.ts';
+import { Router } from '../../core/router/router.ts';
 import { monaco, languageOf } from '../../editor/monaco.ts';
 import { getCompiler } from '../../compiler/compiler.ts';
 import {
   TEST_FILE,
-  TSCONFIG,
-  PROJECT_ROOT,
   entryFile,
   isSourceFile,
   outputPathFor,
@@ -19,11 +18,29 @@ import {
 import { Runner } from '../../runtime/runner.ts';
 import { renderChart } from '../../runtime/chart.ts';
 import type { RunMessage, RunRequest, TestResult } from '../../runtime/protocol.ts';
-import { DEFAULT_EXAMPLE, EXAMPLES, findExample } from '../../examples/index.ts';
-import { loadExample, playgroundStore } from '../../store/playground-store.ts';
+import { EXAMPLES, findExample } from '../../examples/index.ts';
+import { workspaceStore } from '../../store/workspace-store.ts';
+import {
+  PANEL_FRACTION,
+  SIDEBAR_WIDTH,
+  buildTree,
+  isProtected,
+  nodeId,
+  parentFolders,
+  projectFiles,
+  projectTitle,
+  resolveNewPath,
+  sameFile,
+  tabLabels,
+  type FolderNode,
+  type OpenFile,
+  type TreeNode,
+  type WorkspaceState,
+} from '../../workspace/workspace.ts';
+import { CODICON, codicon, fileIcon, type CodiconName } from '../../workspace/icons.ts';
+import { keys, showMenu, type MenuEntry } from '../../workspace/menu.ts';
 import {
   getPackageManager,
-  PACKAGE_JSON,
   projectImports,
 } from '../../packages/package-manager.ts';
 import type { Acquisition } from '../../packages/type-acquisition.ts';
@@ -52,13 +69,21 @@ type Panel = 'console' | 'preview' | 'tests' | 'plot' | 'js' | 'problems';
 type Mode = RunRequest['mode'];
 type StatusState = 'loading' | 'ready' | 'busy' | 'error';
 
+/** An inline name box in the Explorer: a new file, or renaming one. */
+type Editing =
+  | { kind: 'new'; project: string; folder: string }
+  | { kind: 'rename'; project: string; path: string };
+
+const modelKey = (project: string, path: string) => `${project}\u0000${path}`;
+
 export class PlaygroundPageComponent extends BaseComponent {
   static tagName = 'playground-page';
 
   private editor!: monaco.editor.IStandaloneCodeEditor;
   private output!: monaco.editor.IStandaloneCodeEditor;
   private models = new Map<string, monaco.editor.ITextModel>();
-  private disposables: monaco.IDisposable[] = [];
+  private modelListeners = new Map<string, monaco.IDisposable>();
+  private viewStates = new Map<string, monaco.editor.ICodeEditorViewState | null>();
   private compiler = getCompiler();
   private packages = getPackageManager();
   private acquisition: Acquisition = { files: {}, versions: {}, errors: [] };
@@ -70,6 +95,11 @@ export class PlaygroundPageComponent extends BaseComponent {
   private mode: Mode = 'run';
   private lastResult: CompileResult | null = null;
   private previewSeq = 0;
+  /** Worst problem per file of the active project, for the Explorer. */
+  private problemFiles = new Map<string, 'error' | 'warning'>();
+  /** The Explorer row with the keyboard selection. */
+  private selected: string | null = null;
+  private editing: Editing | null = null;
   private onPreviewMessage = (e: MessageEvent<PreviewConsoleMessage>) => {
     const frame = this.$<HTMLIFrameElement>('#preview-frame');
     if (e.source !== frame.contentWindow || e.data?.source !== 'tsrs-preview') return;
@@ -80,6 +110,7 @@ export class PlaygroundPageComponent extends BaseComponent {
     const ms = Math.round((e as CustomEvent<number>).detail);
     this.$('#stats').textContent = `tsrs.wasm compiled in ${ms} ms`;
   };
+  private onKeydown = (e: KeyboardEvent) => this.handleShortcut(e);
 
   constructor() {
     super(template, style);
@@ -88,6 +119,7 @@ export class PlaygroundPageComponent extends BaseComponent {
   init() {
     this.$('#version').textContent =
       `@tsrs/wasm ${tsrsPackage.version.replace(/-ts.*/, '')} · TypeScript ${tsrsPackage.tsrs.typescriptVersion}`;
+    this.renderIcons();
 
     const common: monaco.editor.IStandaloneEditorConstructionOptions = {
       automaticLayout: true,
@@ -96,8 +128,12 @@ export class PlaygroundPageComponent extends BaseComponent {
       tabSize: 2,
       scrollBeyondLastLine: false,
       fixedOverflowWidgets: true,
+      padding: { top: 8 },
+      smoothScrolling: true,
+      stickyScroll: { enabled: false },
+      overviewRulerBorder: false,
     };
-    this.editor = monaco.editor.create(this.$('#editor'), common);
+    this.editor = monaco.editor.create(this.$('#editor'), { ...common, model: null });
     this.output = monaco.editor.create(this.$('#js-output'), {
       ...common,
       readOnly: true,
@@ -106,35 +142,43 @@ export class PlaygroundPageComponent extends BaseComponent {
       renderLineHighlight: 'none',
     });
 
-    const { files, activeFile } = playgroundStore.getState();
-    for (const [path, text] of Object.entries(files)) this.createModel(path, text);
-    this.openFile(activeFile);
+    const state = this.ws();
+    this.ensureProject(state.activeProject);
+    for (const tab of state.tabs) this.ensureProject(tab.project);
+    this.selected = state.activeTab ? nodeId(state.activeTab.project, state.activeTab.path) : null;
+    this.applyLayout();
+    this.showTab(state.activeTab);
 
-    this.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () =>
-      this.run()
+    this.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => this.run());
+    this.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter, () =>
+      this.run('test')
     );
-    this.editor.addCommand(
-      monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter,
-      () => this.run('test')
-    );
-    // Same shortcuts when focus is outside the editor (e.g. on an output tab).
-    this.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !e.defaultPrevented) {
-        e.preventDefault();
-        this.run(e.shiftKey ? 'test' : 'run');
-      }
-    });
+    this.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyB, () => this.toggleSidebar());
+    this.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyJ, () => this.togglePanel());
+    // The same shortcuts when focus is outside the editor.
+    document.addEventListener('keydown', this.onKeydown);
+
     this.$('#run').addEventListener('click', () => this.run());
     this.$('#test').addEventListener('click', () => this.run('test'));
-    this.renderExamplePicker();
     this.$('#stop').addEventListener('click', () => this.stop());
-    this.$('#reset').addEventListener('click', () => this.reset());
-    this.$('#add-file').addEventListener('click', () => this.addFile());
+    this.$('#toggle-panel').addEventListener('click', () => this.togglePanel());
+    this.$('#add-file').addEventListener('click', () => this.startNewFile());
+    this.$('#collapse-all').addEventListener('click', () => this.collapseAll());
+    this.$('#view-explorer').addEventListener('click', () => this.toggleSidebar());
+    this.$('#menu-button').addEventListener('click', () => this.openAppMenu());
+    this.$('#status-problems').addEventListener('click', () => {
+      this.setPanelVisible(true);
+      this.showPanel('problems');
+    });
+    this.$<HTMLAnchorElement>('#about-link').addEventListener('click', (e) => {
+      e.preventDefault();
+      Router.getInstance().navigate('/about');
+    });
     this.querySelectorAll<HTMLElement>('.tabs [data-panel]').forEach((tab) =>
-      tab.addEventListener('click', () =>
-        this.showPanel(tab.dataset.panel as Panel)
-      )
+      tab.addEventListener('click', () => this.showPanel(tab.dataset.panel as Panel))
     );
+    this.initExplorer();
+    this.initSashes();
 
     this.compiler.addEventListener('ready', this.onCompilerReady);
     window.addEventListener('message', this.onPreviewMessage);
@@ -146,10 +190,12 @@ export class PlaygroundPageComponent extends BaseComponent {
     window.clearTimeout(this.checkTimer);
     this.compiler.removeEventListener('ready', this.onCompilerReady);
     window.removeEventListener('message', this.onPreviewMessage);
+    document.removeEventListener('keydown', this.onKeydown);
     this.runner.stop();
-    this.disposables.forEach((d) => d.dispose());
+    this.modelListeners.forEach((d) => d.dispose());
     this.models.forEach((m) => m.dispose());
     this.models.clear();
+    this.modelListeners.clear();
     this.editor?.dispose();
     this.output?.dispose();
   }
@@ -158,136 +204,758 @@ export class PlaygroundPageComponent extends BaseComponent {
     return this.querySelector<T>(selector)!;
   }
 
-  // ---- Files ---------------------------------------------------------------
+  private ws(): WorkspaceState {
+    return workspaceStore.getState();
+  }
 
-  private createModel(path: string, text: string) {
-    const model = monaco.editor.createModel(
-      text,
-      languageOf(path),
-      monaco.Uri.file(`${PROJECT_ROOT}/${path}`)
-    );
-    this.disposables.push(
-      model.onDidChangeContent(() => {
-        const { files } = playgroundStore.getState();
-        playgroundStore.setState({ files: { ...files, [path]: model.getValue() } });
-        this.scheduleCheck();
-      })
-    );
-    this.models.set(path, model);
+  /** The files of the active project (the one that is checked and run). */
+  private files(): ProjectFiles {
+    const state = this.ws();
+    return projectFiles(state, state.activeProject);
   }
 
   private entry(): string {
-    return entryFile(playgroundStore.getState().files);
+    return entryFile(this.files());
   }
 
-  /** Files that can't be deleted: the project can't build without them. */
-  private isProtected(path: string): boolean {
-    return path === TSCONFIG || path === INDEX_HTML || path === this.entry();
+  private renderIcons() {
+    this.querySelectorAll<HTMLElement>('[data-icon]').forEach((el) => {
+      el.prepend(codicon(el.dataset.icon as CodiconName));
+    });
+    this.querySelectorAll<HTMLElement>('[data-glyph]').forEach((el) => {
+      el.textContent = CODICON[el.dataset.glyph as CodiconName];
+    });
+    this.querySelectorAll<HTMLElement>('[data-keys]').forEach((el) => {
+      el.replaceChildren(
+        ...keys(el.dataset.keys!)
+          .split(/\+|(?<=[⌘⇧⌥])/)
+          .filter(Boolean)
+          .map((k) => Object.assign(document.createElement('kbd'), { textContent: k }))
+      );
+    });
   }
 
-  private openFile(path: string) {
-    const active = this.models.has(path)
-      ? path
-      : this.models.has(this.entry())
-        ? this.entry()
-        : this.models.keys().next().value!;
-    const model = this.models.get(active)!;
+  // ---- Projects and models -----------------------------------------------------
+
+  /** Creates the project's models, copying its example's files the first time. */
+  private ensureProject(project: string) {
+    const state = this.ws();
+    if (!state.projects[project]) {
+      workspaceStore.setState({
+        projects: { ...state.projects, [project]: projectFiles(state, project) },
+      });
+    }
+    for (const [path, text] of Object.entries(projectFiles(this.ws(), project))) {
+      if (!this.models.has(modelKey(project, path))) this.createModel(project, path, text);
+    }
+  }
+
+  private createModel(project: string, path: string, text: string) {
+    const key = modelKey(project, path);
+    const model = monaco.editor.createModel(
+      text,
+      languageOf(path),
+      monaco.Uri.from({ scheme: 'file', path: `/workspace/${project}/${path}` })
+    );
+    this.modelListeners.set(
+      key,
+      model.onDidChangeContent(() => {
+        const state = this.ws();
+        const files = projectFiles(state, project);
+        workspaceStore.setState({
+          projects: { ...state.projects, [project]: { ...files, [path]: model.getValue() } },
+        });
+        if (project === state.activeProject) this.scheduleCheck();
+      })
+    );
+    this.models.set(key, model);
+    return model;
+  }
+
+  private disposeModel(project: string, path: string) {
+    const key = modelKey(project, path);
+    this.modelListeners.get(key)?.dispose();
+    this.modelListeners.delete(key);
+    this.models.get(key)?.dispose();
+    this.models.delete(key);
+    this.viewStates.delete(key);
+  }
+
+  private setProjectFiles(project: string, files: ProjectFiles) {
+    const state = this.ws();
+    workspaceStore.setState({ projects: { ...state.projects, [project]: files } });
+  }
+
+  /** Makes `project` the one that is checked and run. */
+  private activateProject(project: string) {
+    if (project === this.ws().activeProject) return;
+    this.stop(true);
+    this.ensureProject(project);
+    workspaceStore.setState({ activeProject: project });
+    this.lastResult = null;
+    this.problemFiles.clear();
+    this.clearConsole();
+    this.log('system', `Project: ${project} (${projectTitle(project)}). Press Run (Ctrl/⌘ + Enter).`);
+    this.$('#plots').replaceChildren();
+    this.$('#tests').replaceChildren();
+    this.$('#test-summary').textContent = "Press Test to run the project's *.test.ts files with test() and expect().";
+    this.setTestCount(0, 0);
+    this.check();
+  }
+
+  // ---- Tabs ------------------------------------------------------------------------
+
+  /** Opens a file in the editor, adding a tab after the current one. */
+  private openFile(file: OpenFile, { focus = false } = {}) {
+    this.ensureProject(file.project);
+    if (!this.models.has(modelKey(file.project, file.path))) return;
+    const state = this.ws();
+    let tabs = state.tabs;
+    if (!tabs.some((t) => sameFile(t, file))) {
+      const at = state.activeTab ? tabs.findIndex((t) => sameFile(t, state.activeTab)) + 1 : tabs.length;
+      tabs = [...tabs.slice(0, at), file, ...tabs.slice(at)];
+    }
+    const expanded = new Set([...state.expanded, nodeId(file.project), ...parentFolders(file.project, file.path)]);
+    workspaceStore.setState({ tabs, expanded: [...expanded] });
+    this.selected = nodeId(file.project, file.path);
+    this.showTab(file);
+    if (focus) this.editor.focus();
+  }
+
+  private showTab(file: OpenFile | null) {
+    const state = this.ws();
+    const previous = state.activeTab;
+    if (previous && this.editor.getModel()) {
+      this.viewStates.set(modelKey(previous.project, previous.path), this.editor.saveViewState());
+    }
+    workspaceStore.setState({ activeTab: file });
+    if (file) this.activateProject(file.project);
+
+    const model = file ? this.models.get(modelKey(file.project, file.path)) ?? null : null;
     this.editor.setModel(model);
-    playgroundStore.setState({ activeFile: active });
+    if (model && file) {
+      const view = this.viewStates.get(modelKey(file.project, file.path));
+      if (view) this.editor.restoreViewState(view);
+    }
+    this.$('#editor-empty').hidden = !!model;
     this.renderTabs();
+    this.renderBreadcrumbs();
+    this.renderTree();
     this.renderOutput();
+  }
+
+  private closeTab(file: OpenFile) {
+    const state = this.ws();
+    const index = state.tabs.findIndex((t) => sameFile(t, file));
+    if (index < 0) return;
+    const tabs = state.tabs.filter((_, i) => i !== index);
+    workspaceStore.setState({ tabs });
+    if (sameFile(state.activeTab, file)) {
+      this.viewStates.delete(modelKey(file.project, file.path));
+      workspaceStore.setState({ activeTab: null });
+      this.showTab(tabs[Math.min(index, tabs.length - 1)] ?? null);
+    } else {
+      this.renderTabs();
+    }
   }
 
   private renderTabs() {
     const container = this.$('#file-tabs');
     const tpl = this.$<HTMLTemplateElement>('#file-tab-template');
-    const { activeFile } = playgroundStore.getState();
+    const { tabs, activeTab } = this.ws();
+    const labels = tabLabels(tabs);
     container.replaceChildren();
-    for (const path of this.models.keys()) {
-      const tab = tpl.content.firstElementChild!.cloneNode(true) as HTMLElement;
-      tab.dataset.file = path;
-      tab.setAttribute('aria-selected', String(path === activeFile));
-      const name = tab.querySelector<HTMLElement>('.file-name')!;
-      name.textContent = path;
-      name.addEventListener('click', () => this.openFile(path));
-      const close = tab.querySelector<HTMLElement>('.file-close')!;
-      if (this.isProtected(path)) close.remove();
-      else close.addEventListener('click', () => this.deleteFile(path));
-      container.appendChild(tab);
-    }
-  }
-
-  private addFile() {
-    const input = window.prompt(
-      'New file name (inside src/), or package.json to pin npm versions:',
-      'src/utils.ts'
-    );
-    if (!input) return;
-    let path = input.trim().replace(/^\.?\/+/, '');
-    const initial = path === PACKAGE_JSON ? '{\n  "dependencies": {}\n}\n' : '';
-    if (path !== PACKAGE_JSON) {
-      if (!path.startsWith('src/')) path = `src/${path}`;
-      if (!/\.(m|c)?(t|j)sx?$/.test(path)) path += '.ts';
-    }
-    if (this.models.has(path)) {
-      this.openFile(path);
-      return;
-    }
-    const { files } = playgroundStore.getState();
-    playgroundStore.setState({ files: { ...files, [path]: initial } });
-    this.createModel(path, initial);
-    this.openFile(path);
-    this.scheduleCheck();
-  }
-
-  private deleteFile(path: string) {
-    if (!window.confirm(`Delete ${path}?`)) return;
-    const files = { ...playgroundStore.getState().files };
-    delete files[path];
-    playgroundStore.setState({ files });
-    this.models.get(path)?.dispose();
-    this.models.delete(path);
-    if (playgroundStore.getState().activeFile === path) this.openFile(this.entry());
-    else this.renderTabs();
-    this.scheduleCheck();
-  }
-
-  private renderExamplePicker() {
-    const select = this.$<HTMLSelectElement>('#example');
-    select.replaceChildren(
-      ...EXAMPLES.map((example) => new Option(example.title, example.id))
-    );
-    select.value = playgroundStore.getState().exampleId;
-    select.addEventListener('change', () => {
-      const example = findExample(select.value);
-      if (
-        example &&
-        window.confirm(`Replace your files with the "${example.title}" example?`)
-      ) {
-        this.loadProject(example.id);
-      } else {
-        select.value = playgroundStore.getState().exampleId;
-      }
+    tabs.forEach((tab, i) => {
+      const el = tpl.content.firstElementChild!.cloneNode(true) as HTMLElement;
+      const active = sameFile(tab, activeTab);
+      el.dataset.file = tab.path;
+      el.dataset.project = tab.project;
+      el.setAttribute('aria-selected', String(active));
+      el.title = `${tab.project}/${tab.path}`;
+      el.querySelector('.tab-icon')!.append(fileIcon(tab.path));
+      el.querySelector('.tab-label')!.textContent = labels[i].name;
+      el.querySelector('.tab-description')!.textContent = labels[i].description;
+      el.querySelector('.file-name')!.addEventListener('click', () => this.showTab(tab));
+      el.addEventListener('auxclick', (e) => {
+        if (e.button === 1) this.closeTab(tab);
+      });
+      const close = el.querySelector<HTMLElement>('.file-close')!;
+      close.append(codicon('close'));
+      close.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.closeTab(tab);
+      });
+      el.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        showMenu(
+          [
+            { label: 'Close', run: () => this.closeTab(tab) },
+            { label: 'Close Others', disabled: tabs.length < 2, run: () => this.closeOthers(tab) },
+            { label: 'Close All', run: () => this.closeOthers(null) },
+            'separator',
+            { label: 'Reveal in Explorer', run: () => this.reveal(tab) },
+          ],
+          { anchor: { x: e.clientX, y: e.clientY }, container: this, label: 'Tab' }
+        );
+      });
+      container.appendChild(el);
+      if (active) el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     });
   }
 
-  private reset() {
-    if (!window.confirm("Restore this example's original files?")) return;
-    this.loadProject(playgroundStore.getState().exampleId);
+  private closeOthers(keep: OpenFile | null) {
+    workspaceStore.setState({ tabs: keep ? [keep] : [] });
+    this.showTab(keep);
   }
 
-  private loadProject(exampleId: string) {
-    this.stop();
-    this.disposables.forEach((d) => d.dispose());
-    this.disposables = [];
-    this.models.forEach((m) => m.dispose());
-    this.models.clear();
-    loadExample(findExample(exampleId) ?? DEFAULT_EXAMPLE);
-    const { files, activeFile } = playgroundStore.getState();
-    for (const [path, text] of Object.entries(files)) this.createModel(path, text);
-    this.$<HTMLSelectElement>('#example').value = playgroundStore.getState().exampleId;
-    this.openFile(activeFile);
-    this.check();
+  private renderBreadcrumbs() {
+    const crumbs = this.$('#breadcrumbs');
+    const tab = this.ws().activeTab;
+    crumbs.replaceChildren();
+    if (!tab) return;
+    const parts = [tab.project, ...tab.path.split('/')];
+    parts.forEach((part, i) => {
+      if (i) crumbs.append(codicon('chevronRight'));
+      const crumb = document.createElement('span');
+      crumb.className = 'breadcrumb';
+      if (i === parts.length - 1) crumb.append(fileIcon(tab.path));
+      crumb.append(part);
+      crumbs.append(crumb);
+    });
+  }
+
+  // ---- Explorer ---------------------------------------------------------------------
+
+  private initExplorer() {
+    const tree = this.$('#explorer');
+    tree.addEventListener('click', (e) => {
+      const row = (e.target as HTMLElement).closest<HTMLElement>('.tree-row');
+      if (!row || row.querySelector('input')) return;
+      this.selected = row.dataset.id!;
+      this.activateRow(row, false);
+    });
+    tree.addEventListener('contextmenu', (e) => {
+      const row = (e.target as HTMLElement).closest<HTMLElement>('.tree-row');
+      e.preventDefault();
+      if (row) {
+        this.selected = row.dataset.id!;
+        this.renderTree();
+      }
+      this.openTreeMenu(row, { x: e.clientX, y: e.clientY });
+    });
+    tree.addEventListener('keydown', (e) => this.onTreeKey(e));
+  }
+
+  /** Opens a file, or expands or collapses a folder. */
+  private activateRow(row: HTMLElement, keyboard: boolean) {
+    const { kind, project, path } = row.dataset;
+    if (kind === 'file') {
+      this.openFile({ project: project!, path: path! }, { focus: keyboard });
+      if (window.matchMedia('(max-width: 900px)').matches) {
+        // On narrow screens the Explorer covers the editor: get out of the way.
+        workspaceStore.setState({ sidebarVisible: false });
+        this.applyLayout();
+      } else if (!keyboard) {
+        this.$('#explorer').focus({ preventScroll: true });
+      }
+    } else {
+      this.setExpanded(row.dataset.id!, row.getAttribute('aria-expanded') !== 'true');
+    }
+  }
+
+  private setExpanded(id: string, open: boolean) {
+    const expanded = new Set(this.ws().expanded);
+    if (open) expanded.add(id);
+    else expanded.delete(id);
+    workspaceStore.setState({ expanded: [...expanded] });
+    this.renderTree();
+  }
+
+  private collapseAll() {
+    workspaceStore.setState({ expanded: [] });
+    this.renderTree();
+  }
+
+  private reveal(file: OpenFile) {
+    const state = this.ws();
+    workspaceStore.setState({
+      expanded: [...new Set([...state.expanded, nodeId(file.project), ...parentFolders(file.project, file.path)])],
+      sidebarVisible: true,
+    });
+    this.selected = nodeId(file.project, file.path);
+    this.applyLayout();
+    this.renderTree();
+    this.$('#explorer').focus();
+  }
+
+  private renderTree() {
+    const tree = this.$('#explorer');
+    const state = this.ws();
+    const expanded = new Set(state.expanded);
+    const activeId = state.activeTab ? nodeId(state.activeTab.project, state.activeTab.path) : null;
+    const scroll = tree.scrollTop;
+    tree.replaceChildren();
+
+    const row = (node: TreeNode | FolderNode, project: string, depth: number, isProject = false) => {
+      const el = document.createElement('div');
+      el.className = 'tree-row';
+      el.setAttribute('role', 'treeitem');
+      el.setAttribute('aria-level', String(depth + 1));
+      el.style.setProperty('--depth', String(depth));
+      el.dataset.id = node.id;
+      el.dataset.project = project;
+      el.dataset.path = node.path;
+      el.dataset.kind = isProject ? 'project' : node.kind;
+      el.setAttribute('aria-selected', String(node.id === this.selected));
+      if (node.kind === 'folder') {
+        const open = expanded.has(node.id);
+        el.setAttribute('aria-expanded', String(open));
+        el.append(codicon(open ? 'chevronDown' : 'chevronRight', 'tree-chevron'));
+      } else {
+        el.append(Object.assign(document.createElement('span'), { className: 'tree-chevron' }));
+        el.append(fileIcon(node.path));
+        if (node.id === activeId) el.dataset.active = 'true';
+        const problem = project === state.activeProject ? this.problemFiles.get(node.path) : undefined;
+        if (problem) el.dataset.problems = problem;
+      }
+      const renaming = this.editing?.kind === 'rename' && this.editing.project === project && this.editing.path === node.path && !isProject;
+      if (renaming) {
+        el.append(this.nameInput(node.name));
+      } else {
+        const label = document.createElement('span');
+        label.className = 'tree-label';
+        label.textContent = node.name;
+        el.append(label);
+      }
+      if (isProject) {
+        el.title = `${projectTitle(project)}${project === state.activeProject ? ' (active)' : ''}`;
+        if (project === state.activeProject) el.dataset.activeProject = 'true';
+        const description = document.createElement('span');
+        description.className = 'tree-description';
+        description.textContent = projectTitle(project);
+        el.append(description);
+      } else {
+        el.title = `${project}/${node.path}`;
+      }
+      tree.appendChild(el);
+      if (renaming) this.attachError(tree, depth);
+    };
+
+    const folder = (node: FolderNode, project: string, depth: number, isProject = false) => {
+      row(node, project, depth, isProject);
+      if (!expanded.has(node.id)) return;
+      if (this.editing?.kind === 'new' && this.editing.project === project && this.editing.folder === node.path) {
+        const el = document.createElement('div');
+        el.className = 'tree-row';
+        el.dataset.kind = 'input';
+        el.style.setProperty('--depth', String(depth + 1));
+        el.append(Object.assign(document.createElement('span'), { className: 'tree-chevron' }));
+        el.append(codicon('file', 'file-icon file-icon-generic'));
+        el.append(this.nameInput(''));
+        tree.appendChild(el);
+        this.attachError(tree, depth + 1);
+      }
+      for (const child of node.children) {
+        if (child.kind === 'folder') folder(child, project, depth + 1);
+        else row(child, project, depth + 1);
+      }
+    };
+
+    for (const example of EXAMPLES) {
+      folder(buildTree(example.id, projectFiles(state, example.id)), example.id, 0, true);
+    }
+    tree.scrollTop = scroll;
+    const input = tree.querySelector<HTMLInputElement>('.tree-input');
+    if (input) {
+      input.focus();
+      const dot = input.value.lastIndexOf('.');
+      input.setSelectionRange(0, dot > 0 ? dot : input.value.length);
+    } else {
+      tree.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  private visibleRows(): HTMLElement[] {
+    return [...this.$('#explorer').querySelectorAll<HTMLElement>('.tree-row[data-id]')];
+  }
+
+  private onTreeKey(e: KeyboardEvent) {
+    if ((e.target as HTMLElement).tagName === 'INPUT') return;
+    const rows = this.visibleRows();
+    const index = rows.findIndex((r) => r.dataset.id === this.selected);
+    const current = rows[index];
+    const select = (row: HTMLElement | undefined) => {
+      if (!row) return;
+      this.selected = row.dataset.id!;
+      this.renderTree();
+    };
+    switch (e.key) {
+      case 'ArrowDown':
+        select(rows[Math.min(rows.length - 1, index + 1)]);
+        break;
+      case 'ArrowUp':
+        select(rows[Math.max(0, index - 1)]);
+        break;
+      case 'Home':
+        select(rows[0]);
+        break;
+      case 'End':
+        select(rows[rows.length - 1]);
+        break;
+      case 'ArrowRight':
+        if (current?.getAttribute('aria-expanded') === 'false') this.setExpanded(current.dataset.id!, true);
+        else if (current?.getAttribute('aria-expanded') === 'true') select(rows[index + 1]);
+        break;
+      case 'ArrowLeft': {
+        if (current?.getAttribute('aria-expanded') === 'true') {
+          this.setExpanded(current.dataset.id!, false);
+        } else if (current) {
+          const level = Number(current.getAttribute('aria-level'));
+          select(rows.slice(0, index).reverse().find((r) => Number(r.getAttribute('aria-level')) < level));
+        }
+        break;
+      }
+      case 'Enter':
+      case ' ':
+        if (current) this.activateRow(current, true);
+        break;
+      case 'F2':
+        if (current?.dataset.kind === 'file') this.startRename(current.dataset.project!, current.dataset.path!);
+        break;
+      case 'Delete':
+      case 'Backspace':
+        if (current?.dataset.kind === 'file' && (e.key === 'Delete' || e.metaKey)) {
+          this.deleteFile(current.dataset.project!, current.dataset.path!);
+        }
+        break;
+      default:
+        return;
+    }
+    e.preventDefault();
+  }
+
+  private openTreeMenu(row: HTMLElement | null, at: { x: number; y: number }) {
+    const project = row?.dataset.project ?? this.ws().activeProject;
+    const kind = row?.dataset.kind;
+    const path = row?.dataset.path ?? '';
+    const folder = kind === 'file' ? path.split('/').slice(0, -1).join('/') : path;
+    const files = projectFiles(this.ws(), project);
+    const entries: MenuEntry[] = [{ label: 'New File…', run: () => this.startNewFile(project, folder) }];
+    if (kind === 'file') {
+      entries.push(
+        'separator',
+        { label: 'Open', run: () => this.openFile({ project, path }, { focus: true }) },
+        { label: 'Rename…', keybinding: 'F2', disabled: isProtected(files, path), run: () => this.startRename(project, path) },
+        { label: 'Delete', keybinding: 'Delete', disabled: isProtected(files, path), run: () => this.deleteFile(project, path) }
+      );
+    }
+    if (kind === 'folder' || kind === 'project' || !row) {
+      entries.push('separator', { label: 'Collapse Folders in Explorer', run: () => this.collapseAll() });
+    }
+    entries.push('separator', { label: `Reset ${project}…`, run: () => this.resetProject(project) });
+    showMenu(entries, { anchor: at, container: this, label: 'Explorer' });
+  }
+
+  private nameInput(value: string): HTMLInputElement {
+    const input = document.createElement('input');
+    input.className = 'tree-input';
+    input.value = value;
+    input.spellcheck = false;
+    input.setAttribute('aria-label', this.editing?.kind === 'rename' ? 'New name' : 'File name');
+    const validate = () => {
+      const error = this.nameError(input.value);
+      input.setAttribute('aria-invalid', String(!!error && input.value !== ''));
+      const box = this.$('#explorer').querySelector<HTMLElement>('.tree-error');
+      if (box) {
+        box.hidden = !error || input.value === '';
+        box.textContent = error ?? '';
+      }
+    };
+    input.addEventListener('input', validate);
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        this.commitName(input.value);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        this.cancelName();
+      }
+    });
+    // Like VS Code: clicking away commits a valid name, and drops an invalid one.
+    input.addEventListener('blur', () => {
+      if (!this.editing) return;
+      if (input.value.trim() && !this.nameError(input.value)) this.commitName(input.value);
+      else this.cancelName();
+    });
+    queueMicrotask(validate);
+    return input;
+  }
+
+  private attachError(tree: HTMLElement, depth: number) {
+    const box = document.createElement('div');
+    box.className = 'tree-error';
+    box.setAttribute('role', 'alert');
+    box.style.setProperty('--depth', String(depth));
+    box.hidden = true;
+    tree.appendChild(box);
+  }
+
+  /** The path a name typed into the Explorer stands for, or why it can't be used. */
+  private resolveName(input: string): { path: string } | { error: string } {
+    const editing = this.editing!;
+    const files = projectFiles(this.ws(), editing.project);
+    if (editing.kind === 'new') return resolveNewPath(editing.folder, input, files);
+    const folder = editing.path.split('/').slice(0, -1).join('/');
+    const others = { ...files };
+    delete others[editing.path];
+    if (input.trim() === editing.path.split('/').pop()) return { path: editing.path };
+    return resolveNewPath(folder, input, others);
+  }
+
+  private nameError(input: string): string | null {
+    if (!this.editing) return null;
+    const result = this.resolveName(input);
+    return 'error' in result ? result.error : null;
+  }
+
+  private startNewFile(project = this.defaultNewFileProject(), folder = this.defaultNewFileFolder(project)) {
+    this.editing = { kind: 'new', project, folder };
+    const state = this.ws();
+    const expanded = new Set([...state.expanded, nodeId(project)]);
+    if (folder) {
+      expanded.add(nodeId(project, folder));
+      for (const id of parentFolders(project, `${folder}/x`)) expanded.add(id);
+    }
+    workspaceStore.setState({ expanded: [...expanded], sidebarVisible: true });
+    this.applyLayout();
+    this.renderTree();
+  }
+
+  /** New files go next to the Explorer selection, or into the active project's src/. */
+  private defaultNewFileProject(): string {
+    const row = this.selected ? this.$('#explorer').querySelector<HTMLElement>(`[data-id="${CSS.escape(this.selected)}"]`) : null;
+    return row?.dataset.project ?? this.ws().activeProject;
+  }
+
+  private defaultNewFileFolder(project: string): string {
+    const row = this.selected ? this.$('#explorer').querySelector<HTMLElement>(`[data-id="${CSS.escape(this.selected)}"]`) : null;
+    if (row && row.dataset.project === project) {
+      return row.dataset.kind === 'file' ? row.dataset.path!.split('/').slice(0, -1).join('/') : row.dataset.path!;
+    }
+    return Object.keys(projectFiles(this.ws(), project)).some((p) => p.startsWith('src/')) ? 'src' : '';
+  }
+
+  private startRename(project: string, path: string) {
+    if (isProtected(projectFiles(this.ws(), project), path)) return;
+    this.editing = { kind: 'rename', project, path };
+    this.renderTree();
+  }
+
+  private cancelName() {
+    this.editing = null;
+    this.renderTree();
+    this.$('#explorer').focus();
+  }
+
+  private commitName(input: string) {
+    const editing = this.editing;
+    if (!editing) return;
+    const result = this.resolveName(input);
+    if ('error' in result) return;
+    this.editing = null;
+    const files = projectFiles(this.ws(), editing.project);
+    if (editing.kind === 'new') {
+      const initial = result.path.endsWith('package.json') ? '{\n  "dependencies": {}\n}\n' : '';
+      this.setProjectFiles(editing.project, { ...files, [result.path]: initial });
+      this.createModel(editing.project, result.path, initial);
+      this.openFile({ project: editing.project, path: result.path }, { focus: true });
+      if (editing.project === this.ws().activeProject) this.scheduleCheck();
+      return;
+    }
+    if (result.path === editing.path) {
+      this.renderTree();
+      return;
+    }
+    const renamed = Object.fromEntries(
+      Object.entries(files).map(([p, text]) => [p === editing.path ? result.path : p, text])
+    );
+    this.setProjectFiles(editing.project, renamed);
+    const text = this.models.get(modelKey(editing.project, editing.path))?.getValue() ?? files[editing.path];
+    this.disposeModel(editing.project, editing.path);
+    this.createModel(editing.project, result.path, text);
+    const from: OpenFile = { project: editing.project, path: editing.path };
+    const to: OpenFile = { project: editing.project, path: result.path };
+    const state = this.ws();
+    workspaceStore.setState({ tabs: state.tabs.map((t) => (sameFile(t, from) ? to : t)) });
+    this.selected = nodeId(to.project, to.path);
+    if (sameFile(state.activeTab, from)) {
+      workspaceStore.setState({ activeTab: null });
+      this.showTab(to);
+    } else {
+      this.renderTabs();
+      this.renderTree();
+    }
+    if (editing.project === state.activeProject) this.scheduleCheck();
+  }
+
+  private deleteFile(project: string, path: string) {
+    const files = projectFiles(this.ws(), project);
+    if (isProtected(files, path)) return;
+    if (!window.confirm(`Are you sure you want to delete '${path}' from ${project}?`)) return;
+    const remaining = { ...files };
+    delete remaining[path];
+    this.setProjectFiles(project, remaining);
+    this.closeTab({ project, path });
+    this.disposeModel(project, path);
+    this.renderTree();
+    if (project === this.ws().activeProject) this.scheduleCheck();
+  }
+
+  private resetProject(project: string) {
+    if (!window.confirm(`Restore ${project}'s original files? Your changes to it will be lost.`)) return;
+    const example = findExample(project);
+    if (!example) return;
+    for (const path of Object.keys(projectFiles(this.ws(), project))) this.disposeModel(project, path);
+    this.setProjectFiles(project, { ...example.files });
+    this.ensureProject(project);
+    const state = this.ws();
+    const tabs = state.tabs.filter((t) => t.project !== project || t.path in example.files);
+    workspaceStore.setState({ tabs, activeTab: null });
+    const active = state.activeTab && tabs.some((t) => sameFile(t, state.activeTab)) ? state.activeTab : tabs[0] ?? null;
+    this.showTab(active);
+    if (project === this.ws().activeProject) this.check();
+  }
+
+  // ---- Layout: side bar, output panel, sashes ------------------------------------------
+
+  private applyLayout() {
+    const state = this.ws();
+    const bench = this.$('.workbench');
+    bench.dataset.sidebar = state.sidebarVisible ? 'visible' : 'hidden';
+    bench.dataset.panelArea = state.panelVisible ? 'visible' : 'hidden';
+    bench.style.setProperty('--sidebar-width', `${state.sidebarWidth}px`);
+    bench.style.setProperty('--editor-fraction', `${(1 - state.panelFraction) * 100}fr`);
+    bench.style.setProperty('--panel-fraction', `${state.panelFraction * 100}fr`);
+    this.$('#view-explorer').setAttribute('aria-pressed', String(state.sidebarVisible));
+    this.$('#toggle-panel').setAttribute('aria-pressed', String(state.panelVisible));
+  }
+
+  private toggleSidebar() {
+    workspaceStore.setState({ sidebarVisible: !this.ws().sidebarVisible });
+    this.applyLayout();
+    if (this.ws().sidebarVisible) this.$('#explorer').focus();
+  }
+
+  private setPanelVisible(visible: boolean) {
+    workspaceStore.setState({ panelVisible: visible });
+    this.applyLayout();
+  }
+
+  private togglePanel() {
+    this.setPanelVisible(!this.ws().panelVisible);
+  }
+
+  private initSashes() {
+    const bench = this.$('.workbench');
+    const drag = (sash: HTMLElement, onMove: (x: number) => void, onReset: () => void) => {
+      sash.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        sash.setPointerCapture(e.pointerId);
+        sash.dataset.dragging = 'true';
+        bench.dataset.dragging = 'true';
+        const move = (ev: PointerEvent) => onMove(ev.clientX);
+        const up = () => {
+          sash.removeEventListener('pointermove', move);
+          sash.removeEventListener('pointerup', up);
+          sash.removeEventListener('pointercancel', up);
+          delete sash.dataset.dragging;
+          delete bench.dataset.dragging;
+        };
+        sash.addEventListener('pointermove', move);
+        sash.addEventListener('pointerup', up);
+        sash.addEventListener('pointercancel', up);
+      });
+      sash.addEventListener('dblclick', onReset);
+    };
+    drag(
+      this.$('#sidebar-sash'),
+      (x) => {
+        const left = this.$('.sidebar').getBoundingClientRect().left;
+        const width = Math.round(x - left);
+        if (width < SIDEBAR_WIDTH.min / 2) {
+          workspaceStore.setState({ sidebarVisible: false });
+        } else {
+          workspaceStore.setState({
+            sidebarVisible: true,
+            sidebarWidth: Math.min(SIDEBAR_WIDTH.max, Math.max(SIDEBAR_WIDTH.min, width)),
+          });
+        }
+        this.applyLayout();
+      },
+      () => {
+        workspaceStore.setState({ sidebarWidth: SIDEBAR_WIDTH.default });
+        this.applyLayout();
+      }
+    );
+    drag(
+      this.$('#panel-sash'),
+      (x) => {
+        const main = this.$('.main').getBoundingClientRect();
+        const fraction = (main.right - x) / main.width;
+        workspaceStore.setState({
+          panelFraction: Math.min(PANEL_FRACTION.max, Math.max(PANEL_FRACTION.min, fraction)),
+        });
+        this.applyLayout();
+      },
+      () => {
+        workspaceStore.setState({ panelFraction: PANEL_FRACTION.default });
+        this.applyLayout();
+      }
+    );
+  }
+
+  // ---- Menus and shortcuts --------------------------------------------------------------
+
+  private openAppMenu() {
+    const button = this.$('#menu-button');
+    const state = this.ws();
+    button.setAttribute('aria-expanded', 'true');
+    showMenu(
+      [
+        { label: 'New File…', run: () => this.startNewFile() },
+        { label: `Reset ${state.activeProject}…`, run: () => this.resetProject(state.activeProject) },
+        'separator',
+        { label: 'Run', keybinding: 'Ctrl+Enter', run: () => this.run() },
+        { label: 'Run Tests', keybinding: 'Ctrl+Shift+Enter', run: () => this.run('test') },
+        { label: 'Stop', disabled: this.$<HTMLButtonElement>('#stop').disabled, run: () => this.stop() },
+        'separator',
+        { label: state.sidebarVisible ? 'Hide Explorer' : 'Show Explorer', keybinding: 'Ctrl+B', run: () => this.toggleSidebar() },
+        { label: state.panelVisible ? 'Hide Output' : 'Show Output', keybinding: 'Ctrl+J', run: () => this.togglePanel() },
+        { label: 'Close All Editors', disabled: !state.tabs.length, run: () => this.closeOthers(null) },
+        'separator',
+        { label: 'How It Works', run: () => Router.getInstance().navigate('/about') },
+        { label: 'View Source on GitHub', run: () => window.open('https://github.com/sholtomaud/tsrs-monaco', '_blank', 'noopener') },
+      ],
+      {
+        anchor: button,
+        container: this,
+        label: 'Application menu',
+        onClose: () => button.setAttribute('aria-expanded', 'false'),
+      }
+    );
+  }
+
+  private handleShortcut(e: KeyboardEvent) {
+    if (!this.isConnected || e.defaultPrevented || !(e.ctrlKey || e.metaKey)) return;
+    // Monaco handles its own shortcuts while it has focus.
+    if ((e.target as HTMLElement).closest?.('.monaco-editor')) return;
+    const key = e.key.toLowerCase();
+    if (key === 'enter') this.run(e.shiftKey ? 'test' : 'run');
+    else if (key === 'b' && !e.shiftKey) this.toggleSidebar();
+    else if (key === 'j' && !e.shiftKey) this.togglePanel();
+    else return;
+    e.preventDefault();
   }
 
   // ---- Type checking ---------------------------------------------------------
@@ -300,14 +968,15 @@ export class PlaygroundPageComponent extends BaseComponent {
   private async check() {
     window.clearTimeout(this.checkTimer);
     const seq = ++this.checkSeq;
-    const { files } = playgroundStore.getState();
+    const project = this.ws().activeProject;
+    const files = this.files();
     try {
       await this.fetchTypes(files, seq);
       if (seq !== this.checkSeq || !this.isConnected) return;
       if (this.compiler.ready) this.setStatus('busy', 'Type checking with tsrs…');
       const result = await this.compiler.compile(files);
       if (seq !== this.checkSeq || !this.isConnected) return;
-      this.applyResult(result);
+      this.applyResult(result, project);
       if (this.runAfterCheck) {
         const mode = this.runAfterCheck;
         this.runAfterCheck = null;
@@ -334,7 +1003,7 @@ export class PlaygroundPageComponent extends BaseComponent {
     this.compiler.setLibraries(this.acquisition.files);
   }
 
-  private applyResult(result: CompileResult) {
+  private applyResult(result: CompileResult, project: string) {
     this.lastResult = result;
     const problems = [
       ...result.diagnostics.map(toProblem),
@@ -351,7 +1020,9 @@ export class PlaygroundPageComponent extends BaseComponent {
         })
       ),
     ];
-    for (const [path, model] of this.models) {
+    for (const path of Object.keys(projectFiles(this.ws(), project))) {
+      const model = this.models.get(modelKey(project, path));
+      if (!model) continue;
       monaco.editor.setModelMarkers(
         model,
         'tsrs',
@@ -369,10 +1040,20 @@ export class PlaygroundPageComponent extends BaseComponent {
           }))
       );
     }
+    this.problemFiles.clear();
+    for (const p of problems) {
+      if (!p.file) continue;
+      if (p.severity === 'error') this.problemFiles.set(p.file, 'error');
+      else if (p.severity === 'warning' && !this.problemFiles.has(p.file)) this.problemFiles.set(p.file, 'warning');
+    }
     this.renderProblems(problems, result);
     this.renderOutput();
+    this.renderTree();
 
     const errors = problems.filter((p) => p.severity === 'error').length;
+    const warnings = problems.filter((p) => p.severity === 'warning').length;
+    this.$('#status-errors').textContent = String(errors);
+    this.$('#status-warnings').textContent = String(warnings);
     const ms = Math.round(result.durationMs);
     const mib = Math.round(result.memoryBytes / 1024 / 1024);
     const npm = Object.entries(this.acquisition.versions)
@@ -413,7 +1094,7 @@ export class PlaygroundPageComponent extends BaseComponent {
           : 'npm';
       item
         .querySelector('button')!
-        .addEventListener('click', () => this.reveal(problem));
+        .addEventListener('click', () => this.revealProblem(problem));
       list.appendChild(item);
     }
 
@@ -433,9 +1114,10 @@ export class PlaygroundPageComponent extends BaseComponent {
     }
   }
 
-  private reveal(problem: Problem) {
-    if (!problem.file || !this.models.has(problem.file)) return;
-    this.openFile(problem.file);
+  private revealProblem(problem: Problem) {
+    const project = this.ws().activeProject;
+    if (!problem.file || !this.models.has(modelKey(project, problem.file))) return;
+    this.openFile({ project, path: problem.file });
     const range = new monaco.Range(
       problem.startLineNumber,
       problem.startColumn,
@@ -449,16 +1131,15 @@ export class PlaygroundPageComponent extends BaseComponent {
 
   /** Shows the JavaScript tsrs emitted for the file being edited. */
   private renderOutput() {
-    const { activeFile } = playgroundStore.getState();
+    const { activeTab, activeProject } = this.ws();
     const label = this.$('#js-label');
     if (!this.lastResult) {
       label.textContent = 'Waiting for the first compile…';
       this.output.setValue('');
       return;
     }
-    const target = isSourceFile(activeFile)
-      ? outputPathFor(activeFile)
-      : outputPathFor(this.entry());
+    const source = activeTab && activeTab.project === activeProject ? activeTab.path : this.entry();
+    const target = isSourceFile(source) ? outputPathFor(source) : outputPathFor(this.entry());
     const js = this.lastResult.outputs[target];
     label.textContent =
       js === undefined ? `${target} was not emitted` : target;
@@ -469,12 +1150,13 @@ export class PlaygroundPageComponent extends BaseComponent {
 
   private run(mode: Mode = 'run') {
     this.runAfterCheck = mode;
+    this.setPanelVisible(true);
     this.showPanel(mode === 'test' ? 'tests' : 'console');
     this.check();
   }
 
   private async execute(result: CompileResult, mode: Mode) {
-    if (mode === 'run' && isWebApp(playgroundStore.getState().files)) {
+    if (mode === 'run' && isWebApp(this.files())) {
       return this.preview(result);
     }
     const modules = Object.fromEntries(
@@ -507,7 +1189,7 @@ export class PlaygroundPageComponent extends BaseComponent {
       this.log('system', `▶ Running ${entries[0]}${despite}`);
     }
 
-    const { files } = playgroundStore.getState();
+    const files = this.files();
     const imports = await this.packages.runtimeImports(
       modules,
       files,
@@ -569,7 +1251,7 @@ export class PlaygroundPageComponent extends BaseComponent {
     );
     this.showPanel('preview');
     try {
-      const { files } = playgroundStore.getState();
+      const files = this.files();
       const modules = Object.fromEntries(
         Object.entries(result.outputs).filter(([path]) => /\.(m|c)?js$/.test(path))
       );
@@ -631,7 +1313,7 @@ export class PlaygroundPageComponent extends BaseComponent {
     badge.dataset.severity = failed ? 'error' : passed ? 'pass' : '';
   }
 
-  private stop() {
+  private stop(quiet = false) {
     const frame = this.$<HTMLIFrameElement>('#preview-frame');
     if (frame.dataset.loaded === 'true') {
       this.previewSeq++;
@@ -643,7 +1325,7 @@ export class PlaygroundPageComponent extends BaseComponent {
     }
     this.runner.stop();
     this.$<HTMLButtonElement>('#stop').disabled = true;
-    this.log('system', '■ Stopped');
+    if (!quiet) this.log('system', '■ Stopped');
   }
 
   private clearConsole() {
@@ -675,6 +1357,7 @@ export class PlaygroundPageComponent extends BaseComponent {
   private setStatus(state: StatusState, text: string) {
     this.$('#status-dot').dataset.state = state;
     this.$('#status').textContent = text;
+    this.$('#active-project').textContent = this.ws().activeProject;
   }
 }
 
