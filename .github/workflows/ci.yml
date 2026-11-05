@@ -1,8 +1,8 @@
 name: CI Pipeline
 
+# Pull requests only: a push to main (a merge) is tested by deploy.yml, which
+# runs the same unit and e2e tests before it publishes to GitHub Pages.
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
 
