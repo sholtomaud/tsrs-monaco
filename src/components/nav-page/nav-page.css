@@ -3,7 +3,7 @@
 }
 
 :host .nav-link {
-  padding: 0.5rem 0.75rem;
+  padding: 0.25rem 0.625rem;
   border-radius: 0.375rem;
   color: var(--boba-text-muted);
   transition: color 0.15s, background-color 0.15s;

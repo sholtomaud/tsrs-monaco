@@ -24,6 +24,9 @@ import 'monaco-editor/features/wordHighlighter/register';
 import 'monaco-editor/features/wordOperations/register';
 import 'monaco-editor/languages/definitions/javascript/register';
 import 'monaco-editor/languages/definitions/typescript/register';
+import 'monaco-editor/languages/definitions/html/register';
+import 'monaco-editor/languages/definitions/css/register';
+import 'monaco-editor/languages/definitions/markdown/register';
 import { jsonDefaults } from 'monaco-editor/languages/features/json/register';
 import EditorWorker from 'monaco-editor/editor/editor.worker?worker';
 import JsonWorker from 'monaco-editor/languages/features/json/json.worker?worker';
@@ -41,8 +44,35 @@ jsonDefaults.setDiagnosticsOptions({
   schemaValidation: 'ignore',
 });
 
+// VS Code's built-in themes, with the workbench's backgrounds (see
+// playground-page.css) so the editor and its surroundings match.
+monaco.editor.defineTheme('workbench-light', {
+  base: 'vs',
+  inherit: true,
+  rules: [],
+  colors: {
+    'editor.background': '#ffffff',
+    'editorLineNumber.foreground': '#6e7681',
+    'editorLineNumber.activeForeground': '#171184',
+    'editorIndentGuide.background1': '#d3d3d3',
+  },
+});
+monaco.editor.defineTheme('workbench-dark', {
+  base: 'vs-dark',
+  inherit: true,
+  rules: [],
+  colors: {
+    'editor.background': '#1f1f1f',
+    'editorGutter.background': '#1f1f1f',
+    'editorLineNumber.foreground': '#6e7681',
+    'editorLineNumber.activeForeground': '#cccccc',
+    'editorIndentGuide.background1': '#404040',
+    'editorWidget.background': '#202020',
+  },
+});
+
 const dark = window.matchMedia('(prefers-color-scheme: dark)');
-const applyTheme = () => monaco.editor.setTheme(dark.matches ? 'vs-dark' : 'vs');
+const applyTheme = () => monaco.editor.setTheme(dark.matches ? 'workbench-dark' : 'workbench-light');
 dark.addEventListener('change', applyTheme);
 applyTheme();
 
@@ -51,5 +81,10 @@ export { monaco };
 export function languageOf(path: string): string {
   if (path.endsWith('.json')) return 'json';
   if (/\.(m|c)?tsx?$/.test(path)) return 'typescript';
-  return 'javascript';
+  if (/\.(m|c)?jsx?$/.test(path)) return 'javascript';
+  if (/\.html?$/.test(path)) return 'html';
+  if (path.endsWith('.css')) return 'css';
+  if (path.endsWith('.md')) return 'markdown';
+  if (path.endsWith('.svg')) return 'html';
+  return 'plaintext';
 }

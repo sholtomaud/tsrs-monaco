@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { newFile, openFile } from './workbench.ts';
 
 async function replaceSource(page: Page, text: string) {
   await page.locator('#editor .view-lines').click();
@@ -56,7 +57,7 @@ test('shows the emitted JavaScript', async ({ page }) => {
   await expect(output).toContainText("import { greet } from './greet.js';");
   await expect(output).not.toContainText('User[]');
 
-  await page.locator('.file-tab[data-file="src/greet.ts"] .file-name').click();
+  await openFile(page, 'hello', 'src/greet.ts');
   await expect(page.locator('#js-label')).toHaveText('dist/greet.js');
   await expect(output).toContainText('export function greet(user) {');
 });
@@ -78,8 +79,8 @@ test('reports runtime errors and can stop an infinite loop', async ({ page }) =>
 });
 
 test('compiles projects with multiple files and persists them', async ({ page }) => {
-  page.on('dialog', (dialog) => dialog.accept('math'));
-  await page.locator('#add-file').click();
+  // New files go next to the selected file: src/index.ts.
+  await newFile(page, 'math');
   await expect(page.locator('.file-tab[data-file="src/math.ts"]')).toHaveAttribute('aria-selected', 'true');
   await replaceSource(page, 'export const square = (n: number) => n * n;\n');
 
@@ -93,7 +94,7 @@ test('compiles projects with multiple files and persists them', async ({ page })
 });
 
 test('reports tsconfig.json errors', async ({ page }) => {
-  await page.locator('.file-tab[data-file="tsconfig.json"] .file-name').click();
+  await openFile(page, 'hello', 'tsconfig.json');
   await replaceSource(page, '{ "compilerOptions": { "notAnOption": true, "outDir": "dist", "rootDir": "src" }, "include": ["src"] }');
   await page.locator('[data-panel="problems"][role="tab"]').click();
   await expect(page.locator('#problems')).toContainText("Unknown compiler option 'notAnOption'.", {
@@ -114,7 +115,7 @@ test('runs the example tests with test() and expect()', async ({ page }) => {
   await expect(page.locator('#test-count')).toHaveText('2');
 
   // Break a test and see the assertion message.
-  await page.locator('.file-tab[data-file="src/greet.test.ts"] .file-name').click();
+  await openFile(page, 'hello', 'src/greet.test.ts');
   await replaceSource(page, "test('fails', () => {\n  expect(1 + 1).toBe(3);\n});\n");
   await page.keyboard.press('ControlOrMeta+Shift+Enter');
   const failure = page.locator('#tests .test-result[data-status="fail"]');
@@ -124,9 +125,7 @@ test('runs the example tests with test() and expect()', async ({ page }) => {
 });
 
 test('Odum CASH example simulates, plots and passes its tests', async ({ page }) => {
-  page.on('dialog', (dialog) => dialog.accept());
-  await page.locator('#example').selectOption('odum-cash');
-  await expect(page.locator('.file-tab[data-file="src/cash.ts"]')).toBeVisible();
+  await openFile(page, 'odum-cash', 'src/index.ts');
   await waitForCheck(page);
   await expect(page.locator('#status')).toHaveText('No type errors');
 
@@ -143,9 +142,9 @@ test('Odum CASH example simulates, plots and passes its tests', async ({ page })
   await page.locator('#test').click();
   await expect(page.locator('#test-summary')).toContainText('7 passed, 0 failed');
 
-  // The choice of example survives a reload.
+  // The active project survives a reload.
   await page.reload();
-  await expect(page.locator('#example')).toHaveValue('odum-cash');
+  await expect(page.locator('#active-project')).toHaveText('odum-cash');
 });
 
 test('Energy flows example runs its WGSL kernels and passes its tests', async ({ page }) => {
@@ -153,9 +152,7 @@ test('Energy flows example runs its WGSL kernels and passes its tests', async ({
   test.setTimeout(180_000);
   // WebGPU, when this browser has an adapter (SwiftShader in playwright.config.js).
   const webgpu = await page.evaluate(async () => !!(await navigator.gpu?.requestAdapter()));
-  page.on('dialog', (dialog) => dialog.accept());
-  await page.locator('#example').selectOption('energy-flows');
-  await expect(page.locator('.file-tab[data-file="src/ecosystem.ts"]')).toBeVisible();
+  await openFile(page, 'energy-flows', 'src/index.ts');
   await waitForCheck(page);
   await expect(page.locator('#status')).toHaveText('No type errors');
 

@@ -1,4 +1,5 @@
 import { expect, type Page } from '@playwright/test';
+import { openFile } from './workbench.ts';
 
 /**
  * Loads an npm example, runs it and its tests. Used by the live spec (real
@@ -9,9 +10,8 @@ export async function checkNpmExample(
   id: string,
   { output, tests }: { output: (string | RegExp)[]; tests: number }
 ) {
-  page.on('dialog', (dialog) => dialog.accept());
   await page.goto('/');
-  await page.locator('#example').selectOption(id);
+  await openFile(page, id, 'src/index.ts');
   await expect(page.locator('#status')).toHaveText('No type errors', { timeout: 120_000 });
 
   await page.locator('#run').click();

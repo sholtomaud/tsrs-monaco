@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { mockCdn } from './cdn-mock.ts';
 import { esm, registry } from './npm-fixtures.ts';
+import { openFile } from './workbench.ts';
 
 async function replaceSource(page: Page, text: string) {
   await page.locator('#editor .view-lines').click();
@@ -22,8 +23,7 @@ test.beforeEach(async ({ page, context }) => {
   await page.goto('/');
   await expect(page.locator('#editor .monaco-editor')).toBeVisible();
   await waitForCheck(page);
-  page.on('dialog', (dialog) => dialog.accept());
-  await page.locator('#example').selectOption('boba-app');
+  await openFile(page, 'boba-app', 'src/main.ts');
   await waitForCheck(page);
 });
 

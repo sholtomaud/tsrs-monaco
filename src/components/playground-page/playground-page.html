@@ -1,38 +1,67 @@
-<div class="playground">
-  <!-- Toolbar -->
-  <div class="toolbar">
-    <div class="flex items-center gap-2 min-w-0">
-      <span id="status-dot" class="status-dot" data-state="loading"></span>
-      <span id="status" class="text-sm text-[var(--boba-text-muted)] truncate">Loading tsrs.wasm…</span>
-    </div>
-    <div class="flex items-center gap-2">
-      <label class="sr-only" for="example">Example</label>
-      <select id="example" class="btn btn-ghost select" title="Load an example project"></select>
-      <button id="reset" class="btn btn-ghost" title="Restore this example's original files">Reset</button>
-      <button id="stop" class="btn btn-ghost" disabled title="Terminate the running worker">Stop</button>
-      <button id="test" class="btn btn-ghost" title="Compile and run src/**/*.test.ts (Ctrl/⌘ + Shift + Enter)">
-        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
-        Test
-      </button>
-      <button id="run" class="btn btn-primary" title="Compile and run (Ctrl/⌘ + Enter)">
-        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l12-7.5z" /></svg>
-        Run
-      </button>
-    </div>
-  </div>
+<div class="workbench" data-sidebar="visible" data-panel-area="visible">
+  <!-- Activity bar -->
+  <nav class="activitybar" aria-label="Activity bar">
+    <button id="menu-button" class="activity" title="Application menu" aria-label="Application menu" aria-haspopup="menu" data-icon="menu"></button>
+    <button id="view-explorer" class="activity" title="Explorer (Ctrl+B)" aria-label="Explorer" aria-pressed="true" data-icon="files"></button>
+    <div class="activity-spacer"></div>
+    <a id="about-link" class="activity" href="/about" title="How it works" aria-label="How it works" data-icon="book"></a>
+    <a class="activity" href="https://github.com/sholtomaud/tsrs-monaco" target="_blank" rel="noopener noreferrer" title="View the source on GitHub" aria-label="GitHub" data-icon="github"></a>
+  </nav>
 
-  <div class="panes">
-    <!-- Source editor -->
-    <section class="pane" aria-label="Source">
-      <div class="tabs" role="tablist" aria-label="Files">
-        <div id="file-tabs" class="flex items-stretch min-w-0 overflow-x-auto"></div>
-        <button id="add-file" class="tab tab-add" title="Add a file">+</button>
+  <!-- Side bar: Explorer -->
+  <aside id="sidebar" class="sidebar" aria-label="Explorer">
+    <div class="sidebar-title">
+      <h2>Explorer</h2>
+      <div class="sidebar-actions">
+        <button id="add-file" class="icon-button" title="New File…" aria-label="New File" data-icon="newFile"></button>
+        <button id="collapse-all" class="icon-button" title="Collapse Folders in Explorer" aria-label="Collapse Folders" data-icon="collapseAll"></button>
       </div>
-      <div id="editor" class="editor"></div>
+    </div>
+    <div class="sidebar-section">
+      <span class="codicon section-chevron" aria-hidden="true"></span>
+      Workspace
+    </div>
+    <div id="explorer" class="tree" role="tree" aria-label="Files" tabindex="0"></div>
+  </aside>
+  <div id="sidebar-sash" class="sash sash-vertical" role="separator" aria-orientation="vertical" aria-label="Resize the Explorer" tabindex="-1"></div>
+
+  <!-- Editor and output -->
+  <div class="main">
+    <section class="editor-group" aria-label="Editor">
+      <div class="editor-titlebar">
+        <div id="file-tabs" class="editor-tabs" role="tablist" aria-label="Open editors"></div>
+        <div class="editor-actions">
+          <button id="run" class="action action-primary" title="Run (Ctrl+Enter)">
+            <span class="codicon" aria-hidden="true" data-glyph="play"></span><span>Run</span>
+          </button>
+          <button id="test" class="action" title="Run Tests (Ctrl+Shift+Enter)">
+            <span class="codicon" aria-hidden="true" data-glyph="beaker"></span><span>Test</span>
+          </button>
+          <button id="stop" class="action" disabled title="Stop">
+            <span class="codicon" aria-hidden="true" data-glyph="debugStop"></span><span class="sr-only">Stop</span>
+          </button>
+          <button id="toggle-panel" class="icon-button" title="Toggle Output (Ctrl+J)" aria-label="Toggle Output" aria-pressed="true" data-icon="layoutPanel"></button>
+        </div>
+      </div>
+      <nav id="breadcrumbs" class="breadcrumbs" aria-label="Breadcrumbs"></nav>
+      <div class="editor-body">
+        <div id="editor" class="editor"></div>
+        <div id="editor-empty" class="editor-empty" hidden>
+          <div class="editor-empty-mark">TS</div>
+          <p>Open a file from the Explorer</p>
+          <dl class="shortcuts">
+            <dt>Run</dt><dd data-keys="Ctrl+Enter"></dd>
+            <dt>Run Tests</dt><dd data-keys="Ctrl+Shift+Enter"></dd>
+            <dt>Toggle Explorer</dt><dd data-keys="Ctrl+B"></dd>
+            <dt>Toggle Output</dt><dd data-keys="Ctrl+J"></dd>
+          </dl>
+        </div>
+      </div>
     </section>
 
-    <!-- Output -->
-    <section class="pane" aria-label="Output">
+    <div id="panel-sash" class="sash sash-vertical" role="separator" aria-orientation="vertical" aria-label="Resize the output" tabindex="-1"></div>
+
+    <section id="panel-area" class="panel-area" aria-label="Output">
       <div class="tabs" role="tablist" aria-label="Output">
         <button class="tab" role="tab" data-panel="console" aria-selected="true">Console</button>
         <button class="tab" role="tab" data-panel="preview" aria-selected="false">Preview</button>
@@ -54,7 +83,7 @@
         <!-- Same origin, so its service worker can serve it: a web app here can
              reach the playground's page, as code run in your own browser can. -->
         <iframe id="preview-frame" class="preview-frame" title="Preview" data-loaded="false"></iframe>
-        <p class="panel-caption preview-empty">Projects with an index.html, like the Boba template example, open here when you press Run.</p>
+        <p class="panel-caption preview-empty">Projects with an index.html, like boba-app, open here when you press Run.</p>
       </div>
       <div class="panel" data-panel="tests" hidden>
         <div id="test-summary" class="panel-caption">Press Test to run the project's *.test.ts files with test() and expect().</div>
@@ -62,7 +91,7 @@
       </div>
       <div class="panel" data-panel="plot" hidden>
         <div id="plots" class="plots">
-          <p class="panel-caption">Call plot() from your code to draw charts here. Try the Odum CASH example.</p>
+          <p class="panel-caption">Call plot() from your code to draw charts here. Try odum-cash or energy-flows.</p>
         </div>
       </div>
       <div class="panel" data-panel="js" hidden>
@@ -75,16 +104,33 @@
     </section>
   </div>
 
-  <div class="statusbar">
-    <span id="stats">tsrs (TypeScript 7 in Rust) · WebAssembly</span>
-    <span id="version" class="font-mono"></span>
-  </div>
+  <!-- Status bar -->
+  <footer class="statusbar">
+    <div class="statusbar-side">
+      <span class="status-item status-project" title="The project that is checked and run">
+        <span class="codicon" aria-hidden="true" data-glyph="files"></span>
+        <span id="active-project"></span>
+      </span>
+      <button id="status-problems" class="status-item" title="Problems">
+        <span class="codicon" aria-hidden="true" data-glyph="error"></span><span id="status-errors">0</span>
+        <span class="codicon" aria-hidden="true" data-glyph="warning"></span><span id="status-warnings">0</span>
+      </button>
+      <span class="status-item">
+        <span id="status-dot" class="status-dot" data-state="loading"></span>
+        <span id="status">Loading tsrs.wasm…</span>
+      </span>
+    </div>
+    <div class="statusbar-side">
+      <span id="stats" class="status-item status-stats">tsrs (TypeScript 7 in Rust) · WebAssembly</span>
+      <span id="version" class="status-item"></span>
+    </div>
+  </footer>
 </div>
 
 <template id="file-tab-template">
   <div class="tab file-tab" role="tab">
-    <button class="file-name"></button>
-    <button class="file-close" title="Delete file" aria-label="Delete file">×</button>
+    <button class="file-name"><span class="tab-icon"></span><span class="tab-label"></span><span class="tab-description"></span></button>
+    <button class="file-close" title="Close" aria-label="Close"></button>
   </div>
 </template>
 

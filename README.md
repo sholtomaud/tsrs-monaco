@@ -82,7 +82,14 @@ Background: [Cloudflare's TypeScript compiler in Rust](https://socket.dev/blog/c
   `index.html`; a build would bundle them into the app's own origin, so the preview adds just those CDN origins to
   the app's Content-Security-Policy, if it has one. The app's console output, load errors and CSP violations
   appear in the Console. Regenerate the example with `node scripts/sync-boba-example.mjs path/to/boba/template`.
-- **Persistence.** Files are saved to `localStorage`; Reset restores the current example.
+- **Workspace.** A VS Code-style workbench: every example is a project folder in the **Explorer** (activity bar
+  on the left; Ctrl/⌘ + B shows and hides it). Open files from any project into tabs; the project of the file
+  you're editing is the one that is type checked, run and tested (it's named in the status bar). The Explorer
+  creates (with `/` for folders), renames (F2) and deletes files inline, and is driven by the keyboard (arrows,
+  Enter). Projects keep their own edits; right-click a project, or use the ☰ menu, to Reset it to its original
+  files. The side bar and the output panel (Ctrl/⌘ + J) resize by dragging their edges.
+- **Persistence.** The workspace (every project's files, open tabs, expanded folders and layout) is saved to
+  `localStorage`.
 
 ## Source layout
 
@@ -107,9 +114,10 @@ src/
 ├── examples/                # example projects (+ a test that compiles and runs them;
 │                            #   energy-flows.ts is generated from /examples/energy-flows)
 ├── editor/monaco.ts         # Monaco set-up (features, languages, workers, theme)
-├── store/playground-store.ts
+├── workspace/               # projects, file tree, tabs and persistence; file icons; menus
+├── store/workspace-store.ts
 └── components/
-    ├── playground-page/     # editor, file tabs, Console / JavaScript / Problems
+    ├── playground-page/     # the workbench: activity bar, Explorer, editor tabs, output panel, status bar
     ├── about-page/          # "How it works"
     └── nav-page/
 ```

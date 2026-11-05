@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { mockCdn, type Registry } from './cdn-mock.ts';
 import { esm, registry } from './npm-fixtures.ts';
+import { newFile } from './workbench.ts';
 
 async function replaceSource(page: Page, text: string) {
   await page.locator('#editor .view-lines').click();
@@ -66,8 +67,8 @@ test('package.json pins versions', async ({ page, context }) => {
   };
   await mockCdn(context, pinned, { 'split-lib@0.2.0': 'export const shout = (s) => `v0.2 ${s}`;' });
   await page.goto('/');
-  page.on('dialog', (dialog) => dialog.accept('package.json'));
-  await page.locator('#add-file').click();
+  await newFile(page, 'package.json', { project: 'hello' });
+  await expect(page.locator('#file-tabs [data-file="package.json"]')).toHaveAttribute('aria-selected', 'true');
   await replaceSource(page, '{ "dependencies": { "split-lib": "0.2.0" } }');
   await page.locator('.file-tab[data-file="src/index.ts"] .file-name').click();
   await replaceSource(page, "import { shout } from 'split-lib';\nconsole.log(shout('hi'));\n");
