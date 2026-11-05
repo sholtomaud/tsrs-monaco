@@ -1,8 +1,13 @@
 name: Deploy to GitHub Pages
 
+# Pages must be set to deploy from GitHub Actions (Settings → Pages → Source).
+# With "Deploy from a branch", GitHub also publishes the raw repository, whose
+# index.html loads src/main.ts directly, and the site breaks.
 on:
   push:
     branches: ['main']
+  # Re-publish without a commit, e.g. after changing the Pages source.
+  workflow_dispatch:
 
 permissions:
   contents: read
