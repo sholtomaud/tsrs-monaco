@@ -1,0 +1,12 @@
+{
+  "name": "fluxkit",
+  "version": "0.1.0",
+  "description": "Write a dynamical system in plain TypeScript; run every parameter sweep as WebGPU threads, or on the CPU.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": ["src", "README.md"],
+  "keywords": ["webgpu", "wgsl", "ode", "simulation", "physics", "quaternion"]
+}

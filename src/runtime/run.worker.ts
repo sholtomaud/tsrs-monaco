@@ -8,6 +8,18 @@ import { expect } from './expect.ts';
 import { formatArgs } from './format.ts';
 import { createLinker } from './module-graph.ts';
 import type { ConsoleLevel, RunMessage, RunRequest } from './protocol.ts';
+import { builtinShim } from '../packages/builtin.ts';
+import * as fluxkit from '../../packages/fluxkit/src/index.ts';
+
+// Built-in packages: user code imports them by name, and gets these modules.
+const builtins: Record<string, Record<string, unknown>> = { fluxkit };
+(globalThis as Record<string, unknown>).__playgroundBuiltins = builtins;
+const builtinUrls = Object.fromEntries(
+  Object.entries(builtins).map(([name, module]) => [
+    name,
+    URL.createObjectURL(new Blob([builtinShim(name, Object.keys(module))], { type: 'text/javascript' })),
+  ])
+);
 
 // Generous: a first test may download a library (onnxruntime-web is ~30 MB).
 const TEST_TIMEOUT_MS = 30_000;
@@ -106,7 +118,7 @@ self.onmessage = async ({ data }: MessageEvent<RunRequest>) => {
             type: 'text/javascript',
           })
         ),
-      data.imports
+      { ...builtinUrls, ...data.imports }
     );
 
     if (data.mode === 'run') {
