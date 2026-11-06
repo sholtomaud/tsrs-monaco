@@ -15,10 +15,16 @@ import { expect } from '../runtime/expect.ts';
 import { toChart, type Chart, type PlotOptions, type Series } from '../runtime/chart.ts';
 import { projectImports } from '../packages/package-manager.ts';
 import { buildSite, isWebApp } from '../preview/site.ts';
+import { BUILTIN_TYPES, isBuiltin } from '../packages/builtin.ts';
 
 async function compile(files: Record<string, string>) {
+  // Built-in packages' declarations, as the playground provides them.
+  const builtins: Record<string, string> = Object.assign(
+    {},
+    ...[...new Set(projectImports(files).map((i) => i.name).filter(isBuiltin))].map((n) => BUILTIN_TYPES[n])
+  );
   const absolute = Object.fromEntries(
-    Object.entries(files).map(([path, text]) => [toAbsolute(path), text])
+    Object.entries({ ...builtins, ...files }).map(([path, text]) => [toAbsolute(path), text])
   );
   const result = await tsc(['-p', toAbsolute(TSCONFIG)], {
     cwd: PROJECT_ROOT,
@@ -31,14 +37,18 @@ async function compile(files: Record<string, string>) {
   return { diagnostics: result.diagnostics ?? [], outputs };
 }
 
+// Built-in packages run from their source (Node strips the types).
+const BUILTIN_URLS = { fluxkit: new URL('../../packages/fluxkit/src/index.ts', import.meta.url).href };
+
 const linkerFor = (outputs: Record<string, string>) =>
   createLinker(
     outputs,
-    (_path, code) => `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
+    (_path, code) => `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`,
+    BUILTIN_URLS
   );
 
 for (const example of EXAMPLES) {
-  const npm = [...new Set(projectImports(example.files).map((i) => i.name))];
+  const npm = [...new Set(projectImports(example.files).map((i) => i.name))].filter((n) => !isBuiltin(n));
   if (npm.length) {
     test(`example: ${example.title}`, {
       skip: `imports ${npm.join(', ')} from npm; run LIVE_CDN=1 npx playwright test e2e/npm-examples.live.spec.ts`,

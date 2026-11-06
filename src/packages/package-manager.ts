@@ -3,6 +3,7 @@
 
 import { isSourceFile, type ProjectFiles } from '../compiler/project.ts';
 import { ESM_SH, JsDelivrSource, runtimeUrl } from './cdn.ts';
+import { BUILTIN_TYPES, isBuiltin } from './builtin.ts';
 import { bareImports, type BareSpecifier } from './specifiers.ts';
 import { TypeAcquirer, type Acquisition, type PackageSource } from './type-acquisition.ts';
 
@@ -56,7 +57,15 @@ export class PackageManager {
 
   /** Declaration files for every package the project imports. */
   async types(files: ProjectFiles): Promise<Acquisition> {
-    const result = await this.acquirer.acquire(projectImports(files), projectRanges(files));
+    const imports = projectImports(files);
+    const result = await this.acquirer.acquire(
+      imports.filter((i) => !isBuiltin(i.name)),
+      projectRanges(files)
+    );
+    // Built-in packages (fluxkit) come with the playground.
+    for (const name of new Set(imports.map((i) => i.name).filter(isBuiltin))) {
+      Object.assign(result.files, BUILTIN_TYPES[name]);
+    }
     const error = packageJsonError(files);
     return error ? { ...result, errors: [error, ...result.errors] } : result;
   }
@@ -73,7 +82,10 @@ export class PackageManager {
     const ranges = projectRanges(files);
     const specs = new Map<string, BareSpecifier>();
     for (const code of Object.values(modules)) {
-      for (const spec of bareImports(code)) specs.set(spec.name + spec.subpath, spec);
+      for (const spec of bareImports(code)) {
+        // The run worker serves built-in packages itself.
+        if (!isBuiltin(spec.name)) specs.set(spec.name + spec.subpath, spec);
+      }
     }
     const entries = await Promise.all(
       [...specs].map(async ([spec, { name, subpath }]) => {

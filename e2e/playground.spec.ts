@@ -177,3 +177,29 @@ test('Energy flows example runs its WGSL kernels and passes its tests', async ({
     await expect(page.locator('#tests')).toContainText('ecosystem kernel: GPU matches CPU, A and all');
   }
 });
+
+test('fluxkit example: plain TypeScript models compile to WebGPU kernels', async ({ page }) => {
+  test.setTimeout(180_000);
+  const webgpu = await page.evaluate(async () => !!(await navigator.gpu?.requestAdapter()));
+  await openFile(page, 'fluxkit', 'src/index.ts');
+  await waitForCheck(page);
+  await expect(page.locator('#status')).toHaveText('No type errors');
+
+  await page.locator('#run').click();
+  await expect(page.locator('#plots svg')).toHaveCount(4, { timeout: 90_000 });
+  await page.locator('[data-panel="console"][role="tab"]').click();
+  const output = page.locator('#console');
+  await expect(output).toContainText(webgpu ? 'Running on WebGPU' : 'Running on CPU reference');
+  await expect(output).toContainText('Most power 2.406 W at R = 0.50, efficiency 50%');
+  await expect(output).toContainText('Bicycle, high  : hub 98.98% efficient, peak 1778 W at 129 rpm');
+  await expect(output).toContainText('efficiency 50.0%');
+  // v²/g = 91.74 m; landing is detected on the first step below ground.
+  await expect(output).toContainText(/Projectile, drag 0: farthest 91\.[78] m at 45°/);
+  await expect(output.locator('[data-level="error"]')).toHaveCount(0);
+
+  // The physics tests, plus every model's kernel against the CPU where there's WebGPU.
+  await page.locator('#test').click();
+  await expect(page.locator('#test-summary')).toContainText(webgpu ? '13 passed, 0 failed' : '9 passed, 0 failed', {
+    timeout: 150_000,
+  });
+});
