@@ -97,7 +97,10 @@ Background: [Cloudflare's TypeScript compiler in Rust](https://socket.dev/blog/c
   you're editing is the one that is type checked, run and tested (it's named in the status bar). The Explorer
   creates (with `/` for folders), renames (F2) and deletes files inline, and is driven by the keyboard (arrows,
   Enter). Projects keep their own edits; right-click a project, or use the ☰ menu, to Reset it to its original
-  files. The side bar and the output panel (Ctrl/⌘ + J) resize by dragging their edges.
+  files. **Your own projects** go in a *Projects* section above the examples: New Project (blank, or a fluxkit
+  model), Duplicate any project or example, and Delete Project. Only the active project is compiled and run, and
+  each project keeps its own Console, Plot and Tests output, so switching projects shows that project's last
+  results rather than everything at once. The side bar and the output panel (Ctrl/⌘ + J) resize by dragging their edges.
 - **Persistence.** The workspace (every project's files, open tabs, expanded folders and layout) is saved to
   `localStorage`.
 

@@ -8,6 +8,7 @@ export const CODICON = {
   chevronRight: '',
   chevronDown: '',
   newFile: '',
+  newFolder: '\uea80',
   collapseAll: '',
   close: '',
   play: '',

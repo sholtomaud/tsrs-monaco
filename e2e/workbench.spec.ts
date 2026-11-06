@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { newFile, openFile, treeRow } from './workbench.ts';
+import { nameProject, newFile, openFile, treeRow } from './workbench.ts';
 
 async function replaceSource(page: Page, text: string) {
   await page.locator('#editor .view-lines').click();
@@ -131,4 +131,75 @@ test('the activity bar, menu and shortcuts show and hide the Explorer and Output
   await page.locator('#view-explorer').click();
   await page.reload();
   await expect(page.locator('.workbench')).toHaveAttribute('data-sidebar', 'hidden');
+});
+
+test('a new project runs only its own files', async ({ page }) => {
+  await page.locator('#add-project').click();
+  await expect(page.locator('#explorer .tree-input')).toHaveValue('my-project');
+  await page.locator('#explorer .tree-input').fill('hello');
+  await expect(page.locator('#explorer .tree-error')).toHaveText('A project hello already exists.');
+  await nameProject(page, 'rc-lab');
+
+  // It sits in Projects, above the examples, opened at its entry file.
+  await expect(treeRow(page, 'rc-lab')).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('#file-tabs .file-tab[data-project="rc-lab"][data-file="src/index.ts"]')).toHaveAttribute('aria-selected', 'true');
+  const sections = page.locator('#explorer .tree-section');
+  await expect(sections).toHaveText(['Projects', 'Examples']);
+
+  await page.locator('#run').click();
+  await expect(page.locator('#console')).toContainText('Hello from rc-lab');
+  await expect(page.locator('#console')).not.toContainText('Hello, Alice');
+  await expect(page.locator('#status')).toHaveText('No type errors');
+});
+
+test('each project keeps its own output', async ({ page }) => {
+  await page.locator('#run').click();
+  await expect(page.locator('#console')).toContainText('Hello, Alice!');
+
+  await openFile(page, 'odum-cash', 'src/index.ts');
+  await expect(page.locator('#console')).not.toContainText('Hello, Alice!');
+  await page.locator('#run').click();
+  await expect(page.locator('#plots svg')).toHaveCount(1);
+
+  // Back to hello: its console, and none of odum-cash's plots.
+  await page.locator('.file-tab[data-project="hello"] .file-name').click();
+  await expect(page.locator('#console')).toContainText('Hello, Alice!');
+  await expect(page.locator('#plots svg')).toHaveCount(0);
+  // And odum-cash's plot is still there when it comes back.
+  await page.locator('.file-tab[data-project="odum-cash"] .file-name').click();
+  await expect(page.locator('#plots svg')).toHaveCount(1);
+  await page.locator('[data-panel="console"][role="tab"]').click();
+  await expect(page.locator('#console')).toContainText('Steady state J/K = 80');
+});
+
+test('duplicate an example to change it, then delete the copy', async ({ page }) => {
+  await treeRow(page, 'odum-cash').click({ button: 'right' });
+  await page.locator('.wb-menu-item', { hasText: 'Duplicate odum-cash…' }).click();
+  await expect(page.locator('#explorer .tree-input')).toHaveValue('odum-cash-copy');
+  await page.locator('#explorer .tree-input').press('Enter');
+  await expect(page.locator('#active-project')).toHaveText('odum-cash-copy');
+  await expect(treeRow(page, 'odum-cash-copy/src/cash.ts')).toBeVisible();
+
+  // Survives a reload; then delete it and the workspace moves on.
+  await page.reload();
+  await expect(treeRow(page, 'odum-cash-copy')).toBeVisible();
+  await expect(page.locator('#active-project')).toHaveText('odum-cash-copy');
+  page.on('dialog', (dialog) => dialog.accept());
+  await treeRow(page, 'odum-cash-copy').click({ button: 'right' });
+  await expect(page.locator('.wb-menu-item', { hasText: 'Reset odum-cash-copy' })).toHaveCount(0);
+  await page.locator('.wb-menu-item', { hasText: 'Delete odum-cash-copy…' }).click();
+  await expect(treeRow(page, 'odum-cash-copy')).toHaveCount(0);
+  await expect(page.locator('#file-tabs .file-tab[data-project="odum-cash-copy"]')).toHaveCount(0);
+  await expect(page.locator('#active-project')).toHaveText('hello');
+  await expect(page.locator('#new-project-hint')).toBeVisible();
+});
+
+test('a new fluxkit project runs its model', async ({ page }) => {
+  await page.locator('#menu-button').click();
+  await page.locator('.wb-menu-item', { hasText: 'New fluxkit Project…' }).click();
+  await nameProject(page, 'decay');
+  await expect(page.locator('#status')).toHaveText('No type errors', { timeout: 30_000 });
+  await page.locator('#run').click();
+  await expect(page.locator('#plots svg')).toHaveCount(1, { timeout: 60_000 });
+  await expect(page.locator('#plots')).toContainText('Exponential decay');
 });

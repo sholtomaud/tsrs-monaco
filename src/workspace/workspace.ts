@@ -4,17 +4,27 @@
 // loses nothing, and Reset restores one project's original files.
 
 import { INDEX_HTML } from '../preview/site.ts';
-import { TSCONFIG, entryFile, type ProjectFiles } from '../compiler/project.ts';
+import { DEFAULT_TSCONFIG, ENTRY, TSCONFIG, entryFile, type ProjectFiles } from '../compiler/project.ts';
 import { DEFAULT_EXAMPLE, EXAMPLES, findExample } from '../examples/index.ts';
+import { PLAYGROUND_DTS } from '../examples/playground-dts.ts';
 
 export interface OpenFile {
   project: string;
   path: string;
 }
 
+/** A project folder the user made (examples are the others). */
+export interface UserProject {
+  id: string;
+  /** Created from: a template, or the project it duplicates. */
+  from: string;
+}
+
 export interface WorkspaceState {
   /** Files of each project that has been opened; the others are their example's. */
   projects: Record<string, ProjectFiles>;
+  /** The user's own projects, in the order they were made. */
+  userProjects: UserProject[];
   /** The project that is checked, compiled and run. */
   activeProject: string;
   /** Open editor tabs, in order. */
@@ -43,8 +53,69 @@ export const nodeId = (project: string, path = '') => (path ? `${project}/${path
 export const sameFile = (a: OpenFile | null, b: OpenFile | null) =>
   !!a && !!b && a.project === b.project && a.path === b.path;
 
-export function projectTitle(project: string): string {
+export function projectTitle(project: string, state?: WorkspaceState): string {
+  const mine = state?.userProjects.find((p) => p.id === project);
+  if (mine) return mine.from.startsWith('template:') ? `My project (${mine.from.slice(9)})` : `Copy of ${mine.from}`;
   return findExample(project)?.title ?? project;
+}
+
+export const isExample = (project: string) => !!findExample(project);
+
+/** Every project folder: the user's first, then the examples. */
+export function projectIds(state: WorkspaceState): string[] {
+  return [...state.userProjects.map((p) => p.id), ...EXAMPLES.map((e) => e.id)];
+}
+
+export type Template = 'blank' | 'fluxkit';
+
+/** The files a new project starts with. */
+export function templateFiles(template: Template, name: string): ProjectFiles {
+  const index =
+    template === 'fluxkit'
+      ? `import * as fx from 'fluxkit';
+
+// A fluxkit model: write the rates as plain TypeScript. Each swept value is
+// one run (one GPU thread when this browser has WebGPU).
+const decay = new fx.Model('${name}', {
+  params: { k: fx.sweep(0.1, 1, 10) },
+  state: { x: 1 },
+  rates: (s, p) => ({ x: -p.k * s.x }),
+  outputs: (s) => ({ remaining: s.x }),
+  dt: 0.01,
+  tEnd: 5,
+});
+
+const run = await decay.run();
+console.info(\`\${run.rows.length} runs on \${run.description}\`);
+plot({ name: 'x(5)', points: run.series('k', 'remaining') }, { title: 'Exponential decay', xLabel: 'k', yLabel: 'x at t = 5' });
+`
+      : `// ${name}: press Run (Ctrl/⌘ + Enter). Add files from the Explorer.
+console.log('Hello from ${name}');
+`;
+  return { [TSCONFIG]: DEFAULT_TSCONFIG, [ENTRY]: index, 'src/playground.d.ts': PLAYGROUND_DTS };
+}
+
+/** A new project folder's name, or why it can't be used. */
+export function checkProjectName(input: string, state: WorkspaceState): { id: string } | { error: string } {
+  const id = input.trim();
+  if (!id) return { error: 'A project name must be provided.' };
+  if (!/^[A-Za-z0-9][\w.-]*$/.test(id)) {
+    return { error: 'Use letters, digits, -, _ and . (starting with a letter or digit).' };
+  }
+  if (id.length > 64) return { error: 'Keep the name under 64 characters.' };
+  if (projectIds(state).some((p) => p.toLowerCase() === id.toLowerCase())) {
+    return { error: `A project ${id} already exists.` };
+  }
+  return { id };
+}
+
+/** A free name like base-2 for a copy. */
+export function freeProjectName(base: string, state: WorkspaceState): string {
+  const taken = new Set(projectIds(state).map((p) => p.toLowerCase()));
+  for (let i = 1; ; i++) {
+    const name = i === 1 ? base : `${base}-${i}`;
+    if (!taken.has(name.toLowerCase())) return name;
+  }
 }
 
 /** A fresh workspace: the default example open at its entry file. */
@@ -54,6 +125,7 @@ export function initialState(): WorkspaceState {
   const entry = { project, path: entryFile(files) };
   return {
     projects: { [project]: files },
+    userProjects: [],
     activeProject: project,
     tabs: [entry],
     activeTab: entry,
@@ -96,6 +168,13 @@ export function restore(saved: unknown, legacy?: unknown): WorkspaceState {
   if (saved && typeof saved === 'object' && (saved as WorkspaceState).projects) {
     const s = saved as Partial<WorkspaceState>;
     const projects: Record<string, ProjectFiles> = {};
+    // The user's projects that still have their files.
+    const userProjects = (Array.isArray(s.userProjects) ? s.userProjects : []).filter(
+      (p): p is UserProject =>
+        !!p && typeof p.id === 'string' && typeof p.from === 'string' && !known.has(p.id) &&
+        !!s.projects?.[p.id] && typeof s.projects[p.id] === 'object'
+    );
+    for (const p of userProjects) known.add(p.id);
     for (const [id, files] of Object.entries(s.projects ?? {})) {
       if (known.has(id) && files && typeof files === 'object') projects[id] = files;
     }
@@ -111,6 +190,7 @@ export function restore(saved: unknown, legacy?: unknown): WorkspaceState {
     if (!projects[activeProject]) projects[activeProject] = projectFiles(fresh, activeProject);
     return {
       projects,
+      userProjects,
       activeProject,
       tabs,
       activeTab,

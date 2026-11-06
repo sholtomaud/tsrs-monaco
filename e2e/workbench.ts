@@ -35,3 +35,12 @@ export async function newFile(page: Page, name: string, { project }: { project?:
   await input.fill(name);
   await input.press('Enter');
 }
+
+/** Names a new project in the Explorer's name box, which `open` has opened. */
+export async function nameProject(page: Page, name: string) {
+  const input = page.locator('#explorer .tree-input');
+  await expect(input).toBeFocused();
+  await input.fill(name);
+  await input.press('Enter');
+  await expect(page.locator('#active-project')).toHaveText(name);
+}

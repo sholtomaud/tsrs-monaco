@@ -24,6 +24,12 @@ import {
   PANEL_FRACTION,
   SIDEBAR_WIDTH,
   buildTree,
+  checkProjectName,
+  freeProjectName,
+  isExample,
+  projectIds,
+  templateFiles,
+  type Template,
   isProtected,
   nodeId,
   parentFolders,
@@ -72,7 +78,20 @@ type StatusState = 'loading' | 'ready' | 'busy' | 'error';
 /** An inline name box in the Explorer: a new file, or renaming one. */
 type Editing =
   | { kind: 'new'; project: string; folder: string }
-  | { kind: 'rename'; project: string; path: string };
+  | { kind: 'rename'; project: string; path: string }
+  | { kind: 'project'; from: { template: Template } | { project: string }; suggested: string };
+
+/** What a project's output panels showed when another project took over. */
+interface SavedOutput {
+  console: Node[];
+  plots: Node[];
+  tests: Node[];
+  summary: string;
+  count: string;
+  severity: string;
+}
+
+const TEST_HINT = "Press Test to run the project's *.test.ts files with test() and expect().";
 
 const modelKey = (project: string, path: string) => `${project}\u0000${path}`;
 
@@ -100,6 +119,8 @@ export class PlaygroundPageComponent extends BaseComponent {
   /** The Explorer row with the keyboard selection. */
   private selected: string | null = null;
   private editing: Editing | null = null;
+  /** Each project's last console, plots and test results, kept when switching. */
+  private savedOutputs = new Map<string, SavedOutput>();
   private onPreviewMessage = (e: MessageEvent<PreviewConsoleMessage>) => {
     const frame = this.$<HTMLIFrameElement>('#preview-frame');
     if (e.source !== frame.contentWindow || e.data?.source !== 'tsrs-preview') return;
@@ -163,6 +184,7 @@ export class PlaygroundPageComponent extends BaseComponent {
     this.$('#stop').addEventListener('click', () => this.stop());
     this.$('#toggle-panel').addEventListener('click', () => this.togglePanel());
     this.$('#add-file').addEventListener('click', () => this.startNewFile());
+    this.$('#add-project').addEventListener('click', () => this.startNewProject({ template: 'blank' }));
     this.$('#collapse-all').addEventListener('click', () => this.collapseAll());
     this.$('#view-explorer').addEventListener('click', () => this.toggleSidebar());
     this.$('#menu-button').addEventListener('click', () => this.openAppMenu());
@@ -291,16 +313,49 @@ export class PlaygroundPageComponent extends BaseComponent {
     if (project === this.ws().activeProject) return;
     this.stop(true);
     this.ensureProject(project);
+    this.saveOutputs(this.ws().activeProject);
     workspaceStore.setState({ activeProject: project });
     this.lastResult = null;
     this.problemFiles.clear();
-    this.clearConsole();
-    this.log('system', `Project: ${project} (${projectTitle(project)}). Press Run (Ctrl/⌘ + Enter).`);
-    this.$('#plots').replaceChildren();
-    this.$('#tests').replaceChildren();
-    this.$('#test-summary').textContent = "Press Test to run the project's *.test.ts files with test() and expect().";
-    this.setTestCount(0, 0);
+    this.restoreOutputs(project);
     this.check();
+  }
+
+  /** Keeps a project's output panels, so switching back shows what it last printed and drew. */
+  private saveOutputs(project: string) {
+    const badge = this.$('#test-count');
+    this.savedOutputs.set(project, {
+      console: [...this.$('#console').childNodes],
+      plots: [...this.$('#plots').childNodes],
+      tests: [...this.$('#tests').childNodes],
+      summary: this.$('#test-summary').textContent ?? '',
+      count: badge.textContent ?? '0',
+      severity: badge.dataset.severity ?? '',
+    });
+  }
+
+  private restoreOutputs(project: string) {
+    const saved = this.savedOutputs.get(project);
+    const badge = this.$('#test-count');
+    if (saved) {
+      this.$('#console').replaceChildren(...saved.console);
+      this.$('#plots').replaceChildren(...saved.plots);
+      this.$('#tests').replaceChildren(...saved.tests);
+      this.$('#test-summary').textContent = saved.summary;
+      badge.textContent = saved.count;
+      badge.dataset.severity = saved.severity;
+      return;
+    }
+    this.clearConsole();
+    this.log('system', `Project: ${project} (${projectTitle(project, this.ws())}). Press Run (Ctrl/⌘ + Enter).`);
+    const caption = Object.assign(document.createElement('p'), {
+      className: 'panel-caption',
+      textContent: `Call plot() from ${project}'s code to draw charts here.`,
+    });
+    this.$('#plots').replaceChildren(caption);
+    this.$('#tests').replaceChildren();
+    this.$('#test-summary').textContent = TEST_HINT;
+    this.setTestCount(0, 0);
   }
 
   // ---- Tabs ------------------------------------------------------------------------
@@ -528,11 +583,11 @@ export class PlaygroundPageComponent extends BaseComponent {
         el.append(label);
       }
       if (isProject) {
-        el.title = `${projectTitle(project)}${project === state.activeProject ? ' (active)' : ''}`;
+        el.title = `${projectTitle(project, state)}${project === state.activeProject ? ' (active)' : ''}`;
         if (project === state.activeProject) el.dataset.activeProject = 'true';
         const description = document.createElement('span');
         description.className = 'tree-description';
-        description.textContent = projectTitle(project);
+        description.textContent = projectTitle(project, state);
         el.append(description);
       } else {
         el.title = `${project}/${node.path}`;
@@ -561,6 +616,31 @@ export class PlaygroundPageComponent extends BaseComponent {
       }
     };
 
+    const section = (title: string) => {
+      const el = document.createElement('div');
+      el.className = 'tree-section';
+      el.textContent = title;
+      tree.appendChild(el);
+    };
+    section('Projects');
+    if (this.editing?.kind === 'project') {
+      const el = document.createElement('div');
+      el.className = 'tree-row';
+      el.dataset.kind = 'input';
+      el.style.setProperty('--depth', '0');
+      el.append(codicon('chevronRight', 'tree-chevron'), this.nameInput(this.editing.suggested));
+      tree.appendChild(el);
+      this.attachError(tree, 0);
+    } else if (!state.userProjects.length) {
+      const hint = document.createElement('button');
+      hint.className = 'tree-hint';
+      hint.id = 'new-project-hint';
+      hint.textContent = 'New Project…';
+      hint.addEventListener('click', () => this.startNewProject({ template: 'blank' }));
+      tree.appendChild(hint);
+    }
+    for (const { id } of state.userProjects) folder(buildTree(id, projectFiles(state, id)), id, 0, true);
+    section('Examples');
     for (const example of EXAMPLES) {
       folder(buildTree(example.id, projectFiles(state, example.id)), example.id, 0, true);
     }
@@ -652,7 +732,13 @@ export class PlaygroundPageComponent extends BaseComponent {
     if (kind === 'folder' || kind === 'project' || !row) {
       entries.push('separator', { label: 'Collapse Folders in Explorer', run: () => this.collapseAll() });
     }
-    entries.push('separator', { label: `Reset ${project}…`, run: () => this.resetProject(project) });
+    entries.push('separator', { label: `Duplicate ${project}…`, run: () => this.startNewProject({ project }) });
+    if (isExample(project)) {
+      entries.push({ label: `Reset ${project}…`, run: () => this.resetProject(project) });
+    } else {
+      entries.push({ label: `Delete ${project}…`, run: () => this.deleteProject(project) });
+    }
+    entries.push('separator', { label: 'New Project…', run: () => this.startNewProject({ template: 'blank' }) });
     showMenu(entries, { anchor: at, container: this, label: 'Explorer' });
   }
 
@@ -704,6 +790,10 @@ export class PlaygroundPageComponent extends BaseComponent {
   /** The path a name typed into the Explorer stands for, or why it can't be used. */
   private resolveName(input: string): { path: string } | { error: string } {
     const editing = this.editing!;
+    if (editing.kind === 'project') {
+      const result = checkProjectName(input, this.ws());
+      return 'error' in result ? result : { path: result.id };
+    }
     const files = projectFiles(this.ws(), editing.project);
     if (editing.kind === 'new') return resolveNewPath(editing.folder, input, files);
     const folder = editing.path.split('/').slice(0, -1).join('/');
@@ -764,6 +854,10 @@ export class PlaygroundPageComponent extends BaseComponent {
     const result = this.resolveName(input);
     if ('error' in result) return;
     this.editing = null;
+    if (editing.kind === 'project') {
+      this.createProject(result.path, editing.from);
+      return;
+    }
     const files = projectFiles(this.ws(), editing.project);
     if (editing.kind === 'new') {
       const initial = result.path.endsWith('package.json') ? '{\n  "dependencies": {}\n}\n' : '';
@@ -812,7 +906,60 @@ export class PlaygroundPageComponent extends BaseComponent {
     if (project === this.ws().activeProject) this.scheduleCheck();
   }
 
+  /** Opens a name box at the top of the Projects section. */
+  private startNewProject(from: { template: Template } | { project: string }) {
+    const state = this.ws();
+    const base = 'project' in from ? `${from.project}-copy` : from.template === 'fluxkit' ? 'my-model' : 'my-project';
+    this.editing = { kind: 'project', from, suggested: freeProjectName(base, state) };
+    workspaceStore.setState({ sidebarVisible: true });
+    this.applyLayout();
+    this.renderTree();
+  }
+
+  private createProject(id: string, from: { template: Template } | { project: string }) {
+    const state = this.ws();
+    const files = 'project' in from ? { ...projectFiles(state, from.project) } : templateFiles(from.template, id);
+    const entry = entryFile(files);
+    workspaceStore.setState({
+      projects: { ...state.projects, [id]: files },
+      userProjects: [...state.userProjects, { id, from: 'project' in from ? from.project : `template:${from.template}` }],
+      expanded: [...new Set([...state.expanded, nodeId(id), ...parentFolders(id, entry)])],
+    });
+    this.ensureProject(id);
+    this.openFile({ project: id, path: entry }, { focus: true });
+  }
+
+  private deleteProject(project: string) {
+    if (isExample(project)) return;
+    if (!window.confirm(`Delete the project ${project} and all its files? This cannot be undone.`)) return;
+    const state = this.ws();
+    for (const path of Object.keys(projectFiles(state, project))) this.disposeModel(project, path);
+    const projects = { ...state.projects };
+    delete projects[project];
+    const tabs = state.tabs.filter((t) => t.project !== project);
+    workspaceStore.setState({
+      projects,
+      userProjects: state.userProjects.filter((p) => p.id !== project),
+      tabs,
+      expanded: state.expanded.filter((id) => id !== project && !id.startsWith(`${project}/`)),
+    });
+    if (this.selected === project || this.selected?.startsWith(`${project}/`)) this.selected = null;
+    if (state.activeProject === project) {
+      // Hand over to another open file, or to the first example.
+      workspaceStore.setState({ activeTab: null });
+      const fallback = projectIds(this.ws())[0];
+      if (tabs[0]) this.showTab(tabs[0]);
+      else this.openFile({ project: fallback, path: entryFile(projectFiles(this.ws(), fallback)) });
+      // Switching away saved the deleted project's output; drop it.
+      this.savedOutputs.delete(project);
+    } else {
+      this.renderTabs();
+      this.renderTree();
+    }
+  }
+
   private resetProject(project: string) {
+    if (!isExample(project)) return;
     if (!window.confirm(`Restore ${project}'s original files? Your changes to it will be lost.`)) return;
     const example = findExample(project);
     if (!example) return;
@@ -924,7 +1071,12 @@ export class PlaygroundPageComponent extends BaseComponent {
     showMenu(
       [
         { label: 'New File…', run: () => this.startNewFile() },
-        { label: `Reset ${state.activeProject}…`, run: () => this.resetProject(state.activeProject) },
+        { label: 'New Project…', run: () => this.startNewProject({ template: 'blank' }) },
+        { label: 'New fluxkit Project…', run: () => this.startNewProject({ template: 'fluxkit' }) },
+        { label: `Duplicate ${state.activeProject}…`, run: () => this.startNewProject({ project: state.activeProject }) },
+        isExample(state.activeProject)
+          ? { label: `Reset ${state.activeProject}…`, run: () => this.resetProject(state.activeProject) }
+          : { label: `Delete ${state.activeProject}…`, run: () => this.deleteProject(state.activeProject) },
         'separator',
         { label: 'Run', keybinding: 'Ctrl+Enter', run: () => this.run() },
         { label: 'Run Tests', keybinding: 'Ctrl+Shift+Enter', run: () => this.run('test') },
