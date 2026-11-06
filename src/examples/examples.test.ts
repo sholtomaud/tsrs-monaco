@@ -16,6 +16,7 @@ import { toChart, type Chart, type PlotOptions, type Series } from '../runtime/c
 import { projectImports } from '../packages/package-manager.ts';
 import { buildSite, isWebApp } from '../preview/site.ts';
 import { BUILTIN_TYPES, isBuiltin } from '../packages/builtin.ts';
+import { templateFiles } from '../workspace/workspace.ts';
 
 async function compile(files: Record<string, string>) {
   // Built-in packages' declarations, as the playground provides them.
@@ -132,5 +133,21 @@ for (const name of fs.existsSync(examplesDir) ? fs.readdirSync(examplesDir) : []
       fs.readFileSync(outputFor(name), 'utf8') === bundle(name),
       `run: node scripts/sync-example.mjs ${name}`
     );
+  });
+}
+
+// New projects start from these: they must type check and run as they are.
+for (const template of ['blank', 'fluxkit'] as const) {
+  test(`the ${template} project template type checks and runs`, async (t) => {
+    const files = templateFiles(template, 'demo');
+    const compiled = await compile(files);
+    assert.deepStrictEqual(compiled.diagnostics.map((d) => `${d.fileName}: ${d.text}`), []);
+    const charts: Chart[] = [];
+    const g = globalThis as Record<string, unknown>;
+    g.plot = (s: Series | Series[], o?: PlotOptions) => charts.push(toChart(s, o));
+    t.mock.method(console, 'log', () => {});
+    t.mock.method(console, 'info', () => {});
+    await import(linkerFor(compiled.outputs)(outputPathFor(entryFile(files))));
+    if (template === 'fluxkit') assert.strictEqual(charts[0]?.series[0].points.length, 10);
   });
 }

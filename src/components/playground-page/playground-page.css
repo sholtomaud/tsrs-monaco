@@ -168,6 +168,31 @@
   padding-bottom: 8px;
   outline: none;
 }
+:host .tree-section {
+  display: flex;
+  align-items: center;
+  height: 22px;
+  margin-top: 4px;
+  padding-left: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--wb-muted);
+}
+:host .tree-hint {
+  display: block;
+  width: calc(100% - 24px);
+  margin: 2px 12px 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  text-align: center;
+  color: var(--wb-accent-fg);
+  background: var(--wb-accent);
+  border-radius: 4px;
+  cursor: pointer;
+}
+:host .tree-hint:hover { background: color-mix(in srgb, var(--wb-accent) 88%, black); }
 :host .tree-row {
   display: flex;
   align-items: center;

@@ -3,6 +3,11 @@ import assert from 'node:assert';
 import {
   SIDEBAR_WIDTH,
   buildTree,
+  checkProjectName,
+  freeProjectName,
+  projectIds,
+  projectTitle,
+  templateFiles,
   initialState,
   isProtected,
   parentFolders,
@@ -138,5 +143,57 @@ describe('restore', () => {
     assert.deepStrictEqual(odum, findExample('odum-cash')!.files);
     odum['src/index.ts'] = 'changed';
     assert.notStrictEqual(findExample('odum-cash')!.files['src/index.ts'], 'changed');
+  });
+});
+
+describe('user projects', () => {
+  const withMine = () => ({
+    ...initialState(),
+    userProjects: [{ id: 'my-project', from: 'template:blank' }],
+    projects: { ...initialState().projects, 'my-project': templateFiles('blank', 'my-project') },
+  });
+
+  test('names must be new, plain and short', () => {
+    const state = withMine();
+    assert.deepStrictEqual(checkProjectName(' rc-circuit ', state), { id: 'rc-circuit' });
+    assert.deepStrictEqual(checkProjectName('My-Project', state), { error: 'A project My-Project already exists.' });
+    assert.deepStrictEqual(checkProjectName('hello', state), { error: 'A project hello already exists.' });
+    assert.ok('error' in checkProjectName('a/b', state));
+    assert.ok('error' in checkProjectName('-x', state));
+    assert.ok('error' in checkProjectName('', state));
+    assert.strictEqual(freeProjectName('my-project', state), 'my-project-2');
+    assert.strictEqual(freeProjectName('hello-copy', state), 'hello-copy');
+  });
+
+  test('the user\'s projects come first, then the examples', () => {
+    const ids = projectIds(withMine());
+    assert.strictEqual(ids[0], 'my-project');
+    assert.ok(ids.includes('hello') && ids.includes('fluxkit'));
+    assert.strictEqual(projectTitle('my-project', withMine()), 'My project (blank)');
+  });
+
+  test('templates are a runnable project', () => {
+    for (const template of ['blank', 'fluxkit'] as const) {
+      const files = templateFiles(template, 'demo');
+      assert.deepStrictEqual(Object.keys(files).sort(), ['src/index.ts', 'src/playground.d.ts', 'tsconfig.json']);
+    }
+    assert.match(templateFiles('fluxkit', 'demo')['src/index.ts'], /new fx\.Model\('demo'/);
+  });
+
+  test('restore keeps the user\'s projects and drops ones without files', () => {
+    const state = restore({
+      ...withMine(),
+      userProjects: [
+        { id: 'my-project', from: 'template:blank' },
+        { id: 'lost', from: 'template:blank' },
+        { id: 'hello', from: 'template:blank' }, // an example's name can't be taken
+        'junk',
+      ],
+      tabs: [{ project: 'my-project', path: 'src/index.ts' }],
+      activeTab: { project: 'my-project', path: 'src/index.ts' },
+    });
+    assert.deepStrictEqual(state.userProjects, [{ id: 'my-project', from: 'template:blank' }]);
+    assert.strictEqual(state.activeProject, 'my-project');
+    assert.ok(state.projects['my-project']['src/index.ts'].includes('Hello from my-project'));
   });
 });
