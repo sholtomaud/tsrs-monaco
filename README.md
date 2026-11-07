@@ -101,6 +101,35 @@ Background: [Cloudflare's TypeScript compiler in Rust](https://socket.dev/blog/c
   model), Duplicate any project or example, and Delete Project. Only the active project is compiled and run, and
   each project keeps its own Console, Plot and Tests output, so switching projects shows that project's last
   results rather than everything at once. The side bar and the output panel (Ctrl/⌘ + J) resize by dragging their edges.
+- **GitHub Actions, in the browser.** The **Workflows** view (activity bar) lists the active project's
+  `.github/workflows/*.yml` and runs them for a simulated event (`pull_request`, `push` or `workflow_dispatch`),
+  so a broken build shows up before you open a pull request. Jobs run in `needs` order, one matrix combination
+  after another, each on a fresh in-memory runner whose workspace `actions/checkout` fills with the project's
+  current files. Steps get GitHub's contexts and `${{ }}` expressions, `if:` (with `success()`, `failure()`, …),
+  `continue-on-error`, step and job outputs (`$GITHUB_OUTPUT`), `$GITHUB_ENV`, `$GITHUB_STEP_SUMMARY`, workflow
+  commands (`::error file=…::`, `::group::`, `::add-mask::`) and local composite actions. `run:` scripts go
+  through a small bash (pipes, `&&`/`||`, `if`/`for`, `$(…)`, here-documents, `set -e`) over a virtual file
+  system. There is no real npm, node or tsc: those commands are thin shims over the playground's toolchain.
+  `tsc` is a tsrs type check (errors become annotations that open the file), `npm test` / `node --test` run the
+  `*.test.ts` files in the run worker, `npm run` runs `package.json` scripts, `npm ci` does nothing (packages load
+  from CDNs), `npx x` runs `x`, and `node -p`/`-e` one-liners run in the worker with a `require()` for the
+  workspace's JSON files. `actions/setup-node`, `cache` and `upload`/`download-artifact` are emulated;
+  deployments are skipped. Tools that can't run in a browser (eslint, playwright, docker, …) pass with a
+  warning, and the run says it was only partly emulated, because GitHub will run them for real. The *hello*
+  example has a CI workflow; **+** in the Workflows view adds one to any project.
+- **Pull requests (GitHub view).** Sign in with a
+  [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new) (Contents,
+  Pull requests and, for workflow files, Workflows: read and write). A static page can't use GitHub's OAuth flows
+  (the web flow needs a client secret, and the device flow's endpoints don't allow cross-origin requests), so the
+  browser calls `api.github.com` directly with your token. The token stays in `sessionStorage` (or
+  `localStorage` if you tick *Remember*), is sent only to `api.github.com`, and is never saved with the
+  workspace. Link a project to a repository (and optionally a folder of it), or **Open a Repository as a
+  Project** to import its text files. The view lists what differs from the base branch (by git blob SHA), and
+  **Create Pull Request** first runs the workflows a `pull_request` would trigger; if one fails, the request
+  waits until you fix it or choose *Open Anyway*. The change is committed with the Git Data API (blobs → tree →
+  commit → branch), so nothing is cloned; without push access the branch goes to your fork. The pull request's
+  description lists what the workflows found. All of this lives in `src/github/`, the only code that talks to
+  GitHub.
 - **Persistence.** The workspace (every project's files, open tabs, expanded folders and layout) is saved to
   `localStorage`.
 
@@ -126,11 +155,15 @@ src/
 ├── packages/                # npm: type acquisition, CDN URLs, package.json resolution; built-ins (fluxkit)
 ├── examples/                # example projects (+ a test that compiles and runs them;
 │                            #   energy-flows.ts is generated from /examples/energy-flows)
+├── actions/                 # GitHub Actions emulator: workflow parsing, ${{ }} expressions, a small bash,
+│                            #   npm/npx/tsc/node shims, the job runner, and the browser toolchain
+├── github/                  # GitHub: token sign-in, REST client, import, changes and pull requests
 ├── editor/monaco.ts         # Monaco set-up (features, languages, workers, theme)
 ├── workspace/               # projects, file tree, tabs and persistence; file icons; menus
 ├── store/workspace-store.ts
 └── components/
-    ├── playground-page/     # the workbench: activity bar, Explorer, editor tabs, output panel, status bar
+    ├── playground-page/     # the workbench: activity bar, Explorer, Workflows and GitHub views,
+    │                        #   editor tabs, output panel, status bar
     ├── about-page/          # "How it works"
     └── nav-page/
 ```
@@ -180,6 +213,11 @@ Requires Node.js 25+ (as Boba does). Pull requests run CI; pushes to `main` run 
   afterwards). Libraries that need the DOM won't work, because code runs in a worker. Multi-threaded wasm (e.g.
   ONNX Runtime threads) needs a cross-origin isolated page, which GitHub Pages can't provide.
 - Circular imports between project files are not supported by the Blob URL linker.
+- The workflow emulator runs the project's TypeScript on tsrs, not a real runner: no containers, services,
+  Docker or JavaScript actions, other shells (`pwsh`, `python`), or tools that need a machine. Jobs run one at a
+  time. Expressions, contexts and the shell cover what CI scripts usually use, not all of bash. A run that relied
+  on something it couldn't emulate says so.
+- Importing a repository takes at most 400 text files of up to 512 KiB each (binaries are skipped).
 - The Preview runs on the playground's origin (its service worker must control the frame), so an app there can
   reach the playground's page and storage. It needs HTTPS or localhost, and the scripts it adds to `index.html`
   (import map, console bridge) need a CSP that allows inline scripts, as Boba's does.

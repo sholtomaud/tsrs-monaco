@@ -27,6 +27,7 @@ import 'monaco-editor/languages/definitions/typescript/register';
 import 'monaco-editor/languages/definitions/html/register';
 import 'monaco-editor/languages/definitions/css/register';
 import 'monaco-editor/languages/definitions/markdown/register';
+import 'monaco-editor/languages/definitions/yaml/register';
 import { jsonDefaults } from 'monaco-editor/languages/features/json/register';
 import EditorWorker from 'monaco-editor/editor/editor.worker?worker';
 import JsonWorker from 'monaco-editor/languages/features/json/json.worker?worker';
@@ -85,6 +86,7 @@ export function languageOf(path: string): string {
   if (/\.html?$/.test(path)) return 'html';
   if (path.endsWith('.css')) return 'css';
   if (path.endsWith('.md')) return 'markdown';
+  if (/\.ya?ml$/.test(path)) return 'yaml';
   if (path.endsWith('.svg')) return 'html';
   return 'plaintext';
 }

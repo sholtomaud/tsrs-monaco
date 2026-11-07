@@ -3,13 +3,16 @@
   <nav class="activitybar" aria-label="Activity bar">
     <button id="menu-button" class="activity" title="Application menu" aria-label="Application menu" aria-haspopup="menu" data-icon="menu"></button>
     <button id="view-explorer" class="activity" title="Explorer (Ctrl+B)" aria-label="Explorer" aria-pressed="true" data-icon="files"></button>
+    <button id="view-actions" class="activity" title="Workflows: run GitHub Actions in the browser" aria-label="Workflows" aria-pressed="false" data-icon="githubAction"></button>
+    <button id="view-github" class="activity" title="GitHub: pull requests" aria-label="GitHub" aria-pressed="false" data-icon="gitPullRequest"></button>
     <div class="activity-spacer"></div>
     <a id="about-link" class="activity" href="/about" title="How it works" aria-label="How it works" data-icon="book"></a>
     <a class="activity" href="https://github.com/sholtomaud/tsrs-monaco" target="_blank" rel="noopener noreferrer" title="View the source on GitHub" aria-label="GitHub" data-icon="github"></a>
   </nav>
 
   <!-- Side bar: Explorer -->
-  <aside id="sidebar" class="sidebar" aria-label="Explorer">
+  <aside id="sidebar" class="sidebar" aria-label="Side bar">
+    <div class="view" data-view="explorer">
     <div class="sidebar-title">
       <h2>Explorer</h2>
       <div class="sidebar-actions">
@@ -19,6 +22,9 @@
       </div>
     </div>
     <div id="explorer" class="tree" role="tree" aria-label="Files" tabindex="0"></div>
+    </div>
+    <div id="actions-view" class="view" data-view="actions" aria-label="Workflows" hidden></div>
+    <div id="github-view" class="view" data-view="github" aria-label="GitHub" hidden></div>
   </aside>
   <div id="sidebar-sash" class="sash sash-vertical" role="separator" aria-orientation="vertical" aria-label="Resize the Explorer" tabindex="-1"></div>
 
@@ -66,6 +72,7 @@
           Tests <span id="test-count" class="badge" data-count="0">0</span>
         </button>
         <button class="tab" role="tab" data-panel="plot" aria-selected="false">Plot</button>
+        <button class="tab" role="tab" data-panel="workflow" aria-selected="false">Workflow</button>
         <button class="tab" role="tab" data-panel="js" aria-selected="false">JavaScript</button>
         <button class="tab" role="tab" data-panel="problems" aria-selected="false">
           Problems <span id="problem-count" class="badge" data-count="0">0</span>
@@ -90,6 +97,9 @@
         <div id="plots" class="plots">
           <p class="panel-caption">Call plot() from your code to draw charts here. Try odum-cash or energy-flows.</p>
         </div>
+      </div>
+      <div class="panel" data-panel="workflow" hidden>
+        <div id="workflow-panel" class="workflow-panel" aria-live="polite"></div>
       </div>
       <div class="panel" data-panel="js" hidden>
         <div id="js-label" class="panel-caption"></div>

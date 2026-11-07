@@ -258,6 +258,152 @@
   border: 1px solid var(--wb-error);
 }
 
+/* ---- Side bar views: Workflows and GitHub ------------------------------------------ */
+
+:host .sidebar .view { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+:host .sidebar .view[hidden] { display: none; }
+:host .view-body { flex: 1; min-height: 0; overflow: auto; padding: 0 12px 12px 20px; }
+:host .view-text,
+:host .view-hint,
+:host .view-empty p { margin: 4px 0 10px; line-height: 1.45; color: var(--wb-muted); }
+:host .view-hint { font-size: 12px; }
+:host .view-text a,
+:host .view-hint a,
+:host .view-notice a,
+:host .repo-link a { color: var(--wb-accent); }
+:host .view-form { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+:host .view-label { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; font-size: 12px; color: var(--wb-muted); }
+:host .view-form .view-label { margin-bottom: 0; }
+:host .view-check { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+:host .view-input {
+  width: 100%;
+  min-height: 24px;
+  padding: 2px 6px;
+  font: inherit;
+  color: var(--wb-text);
+  background: var(--wb-input);
+  border: 1px solid var(--wb-border);
+  border-radius: 2px;
+}
+:host .view-input:focus { outline: 1px solid var(--wb-focus); outline-offset: -1px; }
+:host textarea.view-input { resize: vertical; font-family: var(--wb-font); }
+:host .view-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+:host .view-form > .action,
+:host .view-buttons .action { align-self: flex-start; height: 26px; padding: 0 10px; border-radius: 2px; }
+:host .view-section { margin: 12px 0; padding-top: 10px; border-top: 1px solid var(--wb-border); }
+:host .view-section h3,
+:host .view-section summary h3 { display: inline; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+:host .view-section > h3 { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+:host .view-section summary { cursor: pointer; margin-bottom: 8px; }
+:host .view-error,
+:host .view-notice,
+:host .run-note {
+  margin: 8px 0;
+  padding: 6px 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  border: 1px solid var(--wb-error);
+  background: color-mix(in srgb, var(--wb-error) 12%, var(--wb-sidebar));
+  overflow-wrap: anywhere;
+}
+:host .view-error .view-buttons { margin-top: 6px; }
+:host .view-notice { border-color: var(--wb-pass); background: color-mix(in srgb, var(--wb-pass) 12%, var(--wb-sidebar)); }
+:host .view-progress { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--wb-muted); }
+:host .spin { animation: wb-spin 1.2s linear infinite; }
+@keyframes wb-spin { to { transform: rotate(360deg); } }
+:host .account { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; }
+:host .account img { border-radius: 50%; }
+:host .account span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+:host .repo-link { display: flex; align-items: center; gap: 2px; margin-bottom: 8px; overflow-wrap: anywhere; }
+:host .change-list,
+:host .workflow-list,
+:host .job-list,
+:host .workflow-errors,
+:host .annotations { list-style: none; margin: 0; padding: 0; }
+:host .change-list button,
+:host .job-row,
+:host .workflow-errors button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 22px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 3px;
+}
+:host .change-list button:hover,
+:host .job-row:hover,
+:host .workflow-errors button:hover { background: var(--wb-hover); }
+:host .change-kind { width: 12px; font-family: var(--wb-mono); font-weight: 700; }
+:host .change-list [data-kind='added'] .change-kind { color: var(--wb-pass); }
+:host .change-list [data-kind='modified'] .change-kind { color: var(--wb-warning); }
+:host .change-list [data-kind='deleted'] { text-decoration: line-through; color: var(--wb-muted); cursor: default; }
+:host .change-list [data-kind='deleted'] .change-kind { color: var(--wb-error); }
+
+:host .workflow { margin: 0 -8px 6px; padding: 2px 8px; border-radius: 4px; }
+:host .workflow[data-selected='true'] { background: var(--wb-hover); }
+:host .workflow-row { display: flex; align-items: center; gap: 4px; min-height: 24px; }
+:host .workflow-name { flex: 1; min-width: 0; display: flex; flex-direction: column; text-align: left; cursor: pointer; font-weight: 600; }
+:host .workflow-file { font-weight: 400; font-size: 11px; color: var(--wb-muted); }
+:host .workflow-note { margin: 2px 0 2px 22px; font-size: 12px; color: var(--wb-muted); }
+:host .workflow-errors { margin-left: 22px; font-size: 12px; color: var(--wb-error); }
+:host .job-list { margin-left: 14px; }
+:host .job-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:host .job-time { margin-left: auto; font-size: 11px; color: var(--wb-muted); }
+:host .run-status { flex: none; font-size: 14px; }
+:host .run-success,
+:host .run-completed { color: var(--wb-pass); }
+:host .run-failure { color: var(--wb-error); }
+:host .run-cancelled,
+:host .run-skipped,
+:host .run-queued { color: var(--wb-faint); }
+:host .run-in_progress { color: var(--wb-warning); animation: wb-spin 1.2s linear infinite; }
+
+/* ---- Workflow panel ---------------------------------------------------------------- */
+
+:host .workflow-panel { padding: 8px 12px 16px; }
+:host .run-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+:host .run-header .run-status { font-size: 18px; }
+:host .run-title { flex: 1; min-width: 0; }
+:host .run-title span { color: var(--wb-muted); }
+:host .run-note { display: flex; gap: 6px; border-color: var(--wb-info); background: color-mix(in srgb, var(--wb-info) 10%, var(--wb-editor)); }
+:host .annotations { margin: 8px 0; border: 1px solid var(--wb-border); }
+:host .annotations button { display: flex; align-items: baseline; gap: 6px; width: 100%; padding: 4px 8px; text-align: left; cursor: pointer; }
+:host .annotations button:disabled { cursor: default; }
+:host .annotations button:not(:disabled):hover { background: var(--wb-hover); }
+:host .annotations [data-level='error'] .codicon { color: var(--wb-error); }
+:host .annotations [data-level='warning'] .codicon { color: var(--wb-warning); }
+:host .annotations [data-level='notice'] .codicon { color: var(--wb-info); }
+:host .annotation-message { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+:host .annotation-where { font-size: 11px; color: var(--wb-muted); white-space: nowrap; }
+:host .job { margin-top: 12px; }
+:host .job h3 { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font-size: 13px; font-weight: 600; }
+:host .step summary { display: flex; align-items: center; gap: 6px; min-height: 24px; padding: 0 4px; cursor: pointer; border-radius: 3px; }
+:host .step summary:hover { background: var(--wb-hover); }
+:host .step-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:host .step-log,
+:host .job-summary {
+  margin: 2px 0 6px 22px;
+  padding: 6px 8px;
+  font-family: var(--wb-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: color-mix(in srgb, var(--wb-text) 5%, var(--wb-editor));
+  border-radius: 3px;
+}
+:host .log-group summary { cursor: pointer; font-weight: 600; }
+:host .log-group .log-line { padding-left: 14px; }
+:host .log-line[data-kind='command'] { color: var(--wb-info); }
+:host .log-line[data-kind='err'],
+:host .log-line[data-kind='error'] { color: var(--wb-error); }
+:host .log-line[data-kind='warning'] { color: var(--wb-warning); }
+:host .log-line[data-kind='notice'],
+:host .log-line[data-kind='info'],
+:host .log-line[data-kind='debug'] { color: var(--wb-muted); }
+
 /* ---- Sashes -------------------------------------------------------------------- */
 
 :host .sash { position: relative; z-index: 20; }

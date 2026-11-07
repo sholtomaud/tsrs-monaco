@@ -1,5 +1,6 @@
 import { DEFAULT_TSCONFIG, ENTRY, TSCONFIG, type ProjectFiles } from '../compiler/project.ts';
 import { PLAYGROUND_DTS } from './playground-dts.ts';
+import { STARTER_WORKFLOW } from '../actions/workflow.ts';
 
 export const files: ProjectFiles = {
   [TSCONFIG]: DEFAULT_TSCONFIG,
@@ -41,4 +42,6 @@ test('joins several languages with "and"', () => {
 });
 `,
   'src/playground.d.ts': PLAYGROUND_DTS,
+  // Run it from the Workflows view, before opening a pull request.
+  '.github/workflows/ci.yml': STARTER_WORKFLOW,
 };
