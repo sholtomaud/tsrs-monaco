@@ -21,7 +21,16 @@ export interface JobHost {
   checkedOut: () => ProjectFiles | null;
   /** Records a tool the emulator stood in for or skipped. */
   notEmulated: (tool: string, detail: string) => void;
+  /**
+   * Records what a command did: 'real' work (a type check, tests, a script)
+   * or a 'noop' that only matters on GitHub (installing packages). A step
+   * of only no-ops is shown as not needed in the browser.
+   */
+  effect: (kind: 'real' | 'noop') => void;
 }
+
+/** Set while npx runs a command, so a tool npx installed is on the PATH. */
+const NPX_ENV = 'TSRS_EMULATOR_NPX';
 
 const NODE_VERSION = 'v25.0.0';
 const NPM_VERSION = '11.6.0';
@@ -75,6 +84,7 @@ function printDiagnostics(ctx: CommandContext, compiled: CompileOutput, dir: str
   }
   for (const w of compiled.warnings ?? []) say(ctx, `::warning::${w}`);
   if (errors) say(ctx, `\nFound ${errors} error${errors === 1 ? '' : 's'}${files.size ? ` in ${files.size} file${files.size === 1 ? '' : 's'}` : ''}.`);
+  else say(ctx, '✓ No type errors.');
   return { errors, warnings };
 }
 
@@ -82,8 +92,27 @@ function writeOutputs(ctx: CommandContext, dir: string, outputs: Record<string, 
   for (const [path, text] of Object.entries(outputs)) ctx.fs.write(`${dir}/${path}`, text);
 }
 
-/** `tsc`: type checks with tsrs, writing the emitted files unless --noEmit. */
-async function tsc(args: string[], ctx: CommandContext, host: JobHost): Promise<number> {
+const dependencies = (ctx: CommandContext, host: JobHost) => {
+  const pkg = readPackageJson(ctx) ?? readPackageJson(ctx, host.workspace);
+  return pkg && pkg !== 'invalid' ? { ...pkg.dependencies, ...pkg.devDependencies } : {};
+};
+
+/**
+ * Whether a tool from an npm package is on the PATH, as on a GitHub runner:
+ * when npx fetched it, or in an npm script with the package as a dependency.
+ */
+function onPath(command: string, pkg: string, ctx: CommandContext, host: JobHost): boolean {
+  if (ctx.env[NPX_ENV] === command) return true;
+  return !!ctx.env.npm_lifecycle_event && pkg in dependencies(ctx, host);
+}
+
+/** `tsc` (TypeScript) and `tsrs-wasm` (@tsrs/wasm): type checks with tsrs, writing the emitted files unless --noEmit. */
+async function tsc(args: string[], ctx: CommandContext, host: JobHost, command = 'tsc'): Promise<number> {
+  const pkg = command === 'tsc' ? 'typescript' : '@tsrs/wasm';
+  if (!onPath(command, pkg, ctx, host)) {
+    return fail(ctx, `bash: ${command}: command not found\n(On GitHub ${command} comes from the ${pkg} package: run it with npx -p ${pkg} ${command}, or from an npm script with ${pkg} in devDependencies.)`, 127);
+  }
+  host.effect('real');
   if (args.includes('--version') || args.includes('-v')) {
     say(ctx, `Version ${host.toolchain.typescriptVersion} (${host.toolchain.description})`);
     return 0;
@@ -148,6 +177,7 @@ function selectTests(files: ProjectFiles, compiled: CompileOutput, patterns: str
 
 /** Runs the project's tests (test() and expect() from *.test.ts) in the run worker. */
 async function runTests(args: string[], ctx: CommandContext, host: JobHost, runner: string): Promise<number> {
+  host.effect('real');
   const files = projectAt(ctx);
   if (!Object.keys(files).some((f) => f.endsWith('tsconfig.json'))) {
     return fail(ctx, `${runner}: no tsconfig.json in ${ctx.cwd} (did the workflow check out the repository?)`);
@@ -176,6 +206,7 @@ async function runTests(args: string[], ctx: CommandContext, host: JobHost, runn
 
 /** `node file`: runs an emitted module, or a source file through tsrs. */
 async function runScript(file: string, ctx: CommandContext, host: JobHost): Promise<number> {
+  host.effect('real');
   const files = projectAt(ctx);
   const rel = VirtualFS.normalize(file, ctx.cwd).slice(ctx.cwd.length + 1);
   if (!ctx.fs.isFile(`${ctx.cwd}/${rel}`)) return fail(ctx, `Error: Cannot find module '${file}'`);
@@ -201,6 +232,7 @@ const EVAL_MODULE = 'dist/__node_eval__.js';
  * one-liners like node -p "require('./package.json').version" work.
  */
 async function evaluateInline(code: string, print: boolean, ctx: CommandContext, host: JobHost): Promise<number> {
+  host.effect('real');
   const json: Record<string, string> = {};
   for (const [path, text] of Object.entries(ctx.fs.filesUnder(host.workspace))) {
     if (path.endsWith('.json') && !path.includes('node_modules/')) json[`${host.workspace}/${path}`] = text;
@@ -283,9 +315,15 @@ async function runScriptNamed(name: string, extra: string[], ctx: CommandContext
   return 0;
 }
 
-function install(ctx: CommandContext, tool: string): number {
+function install(ctx: CommandContext, tool: string, host: JobHost, clean: boolean): number {
   const pkg = readPackageJson(ctx);
   if (pkg === 'invalid') return fail(ctx, `${tool} error: package.json is not valid JSON`);
+  // As on GitHub: npm ci needs a package.json and its lockfile.
+  if (clean && !pkg) return fail(ctx, `${tool} error code ENOENT\n${tool} error enoent Could not read package.json in ${ctx.cwd}`);
+  if (clean && !ctx.fs.isFile(`${ctx.cwd}/package-lock.json`) && !ctx.fs.isFile(`${ctx.cwd}/npm-shrinkwrap.json`)) {
+    return fail(ctx, `${tool} error The \`npm ci\` command can only install with an existing package-lock.json or npm-shrinkwrap.json.`);
+  }
+  host.effect('noop');
   const deps = pkg ? { ...pkg.dependencies, ...pkg.devDependencies } : {};
   const names = Object.keys(deps);
   say(ctx, names.length
@@ -302,7 +340,9 @@ function packageManager(host: JobHost): Command {
       say(ctx, NPM_VERSION);
       return 0;
     }
-    if (['ci', 'install', 'i', 'add', 'clean-install', 'rebuild', 'prune', 'dedupe'].includes(sub ?? '')) return install(ctx, tool);
+    if (['ci', 'install', 'i', 'add', 'clean-install', 'rebuild', 'prune', 'dedupe'].includes(sub ?? '')) {
+      return install(ctx, tool, host, sub === 'ci' || sub === 'clean-install');
+    }
     if (sub === 'config' || sub === 'cache' || sub === 'audit' || sub === 'set' || sub === 'fund') {
       say(ctx, `Emulated: ${tool} ${sub} does nothing here.`);
       return 0;
@@ -311,9 +351,11 @@ function packageManager(host: JobHost): Command {
     const scriptArgs = (list: string[]) => (list[0] === '--' ? list.slice(1) : list);
     if (sub === 'test' || sub === 't' || sub === 'tst') {
       const status = await runScriptNamed('test', scriptArgs(rest), ctx, tool);
-      // Without a test script, the playground's own test runner stands in.
-      if (status === -1) return runTests(scriptArgs(rest), ctx, host, `${tool} test`);
-      return status;
+      if (status !== -1) return status;
+      // As on GitHub; the tsrs × Monaco CI action runs a playground project's tests.
+      return fail(ctx, readPackageJson(ctx)
+        ? `${tool} error Missing script: "test"`
+        : `${tool} error enoent Could not read package.json in ${ctx.cwd}\n(To run a playground project's *.test.ts files on GitHub, use the sholtomaud/tsrs-monaco/ci action.)`);
     }
     if (sub === 'run' || sub === 'run-script') {
       const [name, ...more] = rest;
@@ -342,17 +384,40 @@ function packageManager(host: JobHost): Command {
   };
 }
 
-function npx(): Command {
-  return (args, ctx) => {
+/** The package npx installs for a command it can't find. */
+const PACKAGE_OF: Record<string, string> = { tsc: 'typescript', 'tsrs-wasm': '@tsrs/wasm' };
+
+function npx(host: JobHost): Command {
+  return async (args, ctx) => {
     const rest = [...args];
+    const packages: string[] = [];
     while (rest[0]?.startsWith('-')) {
       const flag = rest.shift()!;
-      if (flag === '-p' || flag === '--package') rest.shift();
+      if (flag === '-p' || flag === '--package') packages.push(rest.shift() ?? '');
+      else if (flag.startsWith('--package=')) packages.push(flag.slice(10));
     }
     if (!rest.length) return fail(ctx, 'npx: a command is required');
-    // npx tsc, npx vitest run, npx playwright test, …
-    rest[0] = rest[0].replace(/@[^/]*$/, '');
-    return ctx.exec(rest.map(quote).join(' '));
+    const command = rest[0].replace(/(?<=.)@[^/]*$/, '');
+    rest[0] = command;
+    const pkg = PACKAGE_OF[command];
+    if (pkg) {
+      // npx runs the project's own copy, a -p package, or else the npm package with the command's name.
+      const names = packages.map((p) => p.replace(/(?<=.)@[^/]*$/, ''));
+      if (!names.includes(pkg) && !(pkg in dependencies(ctx, host))) {
+        if (command === 'tsc') {
+          return fail(ctx, 'This is not the tsc command you are looking for\n\nTo get access to the TypeScript compiler, tsc, from the command line either:\n- Use npm install typescript to first add TypeScript to your project before using npx\n- Use yarn to avoid accidentally running code from un-installed packages\n(Or type check with the playground\'s compiler: npx -p @tsrs/wasm tsrs-wasm -p tsconfig.json)');
+        }
+        return fail(ctx, `npm error 404 Not Found - GET https://registry.npmjs.org/${command} - '${command}' is not in this registry.\n(It is in ${pkg}: npx -p ${pkg} ${command})`);
+      }
+    }
+    const saved = ctx.env[NPX_ENV];
+    ctx.env[NPX_ENV] = command;
+    try {
+      return await ctx.exec(rest.map(quote).join(' '));
+    } finally {
+      if (saved === undefined) delete ctx.env[NPX_ENV];
+      else ctx.env[NPX_ENV] = saved;
+    }
   };
 }
 
@@ -435,8 +500,9 @@ export function toolCommands(host: JobHost): Record<string, Command> {
   const commands: Record<string, Command> = {
     node: node(host),
     npm: packageManager(host),
-    npx: npx(),
+    npx: npx(host),
     tsc: (args, ctx) => tsc(args, ctx, host),
+    'tsrs-wasm': (args, ctx) => tsc(args, ctx, host, 'tsrs-wasm'),
     git: git(host),
   };
   for (const [name, what] of Object.entries(UNAVAILABLE)) commands[name] = unavailable(name, what, host);

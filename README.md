@@ -109,16 +109,28 @@ Background: [Cloudflare's TypeScript compiler in Rust](https://socket.dev/blog/c
   `continue-on-error`, step and job outputs (`$GITHUB_OUTPUT`), `$GITHUB_ENV`, `$GITHUB_STEP_SUMMARY`, workflow
   commands (`::error file=…::`, `::group::`, `::add-mask::`) and local composite actions. `run:` scripts go
   through a small bash (pipes, `&&`/`||`, `if`/`for`, `$(…)`, here-documents, `set -e`) over a virtual file
-  system. There is no real npm, node or tsc: those commands are thin shims over the playground's toolchain.
-  `tsc` is a tsrs type check (errors become annotations that open the file), `npm test` / `node --test` run the
-  `*.test.ts` files in the run worker, `npm run` runs `package.json` scripts, `npm ci` does nothing (packages load
-  from CDNs), `npx x` runs `x`, and `node -p`/`-e` one-liners run in the worker with a `require()` for the
-  workspace's JSON files. `actions/setup-node`, `cache` and `upload`/`download-artifact` are emulated;
-  deployments are skipped. Tools that can't run in a browser (eslint, playwright, docker, …) pass with a
-  warning, and the run says it was only partly emulated, because GitHub will run them for real. The *hello*
-  example has a basic CI workflow, and *odum-cash* a fuller one (`model-checks.yml`: jobs that `need` each
-  other, a matrix, job outputs, step summaries and an artifact passed between jobs); **+** in the Workflows view
-  adds one to any project.
+  system. There is no real npm, node or tsc: those commands are thin shims over the playground's toolchain, and
+  they fail where GitHub would. `tsrs-wasm` and `tsc` are a tsrs type check (errors become annotations that open
+  the file), available through `npx` (`npx -p @tsrs/wasm tsrs-wasm`, or `npx tsc` when TypeScript is a
+  dependency) or an npm script; `npm run` runs `package.json` scripts; `npm ci` needs a `package.json` and a
+  lockfile, then does nothing (packages load from CDNs); `node -p`/`-e` one-liners run in the worker with a
+  `require()` for the workspace's JSON files. `actions/setup-node` and `cache` are shown greyed out as *not needed
+  in the browser*; `upload`/`download-artifact` are emulated; deployments are skipped. Tools that can't run in a
+  browser (eslint, playwright, docker, …) pass with a warning, and the run says it was only partly emulated.
+  The *hello* example has the starter workflow, and *odum-cash* a fuller one (`model-checks.yml`: jobs that
+  `need` each other, a matrix, job outputs, step summaries and an artifact passed between jobs); **+** in the
+  Workflows view adds the starter to any project. Both run unchanged on GitHub.
+- **The same checks on GitHub (`sholtomaud/tsrs-monaco/ci`).** The starter workflow type checks with the
+  playground's compiler, pinned (`npx -y -p @tsrs/wasm@<version> tsrs-wasm -p tsconfig.json --noEmit`; Node only
+  runs the WebAssembly), then uses this repository's action ([`ci/action.yml`](ci/action.yml)). The action opens
+  the deployed playground's CI page (`ci.html`) in headless Chromium with Playwright and has it type check and
+  test the project with the editor's own pipeline: tsrs in its worker, npm types and code from the CDNs, the
+  tests in a run worker, WebGPU on SwiftShader. It prints the results with annotations and a step summary, and
+  sets `errors`, `passed`, `failed` and (with `entry: true`, which also runs `src/index.ts`) `entry-log`. In the
+  Workflows view the step runs the same code (`src/ci/checks.ts`) in this page. Pin `playground-version` to a
+  release so a playground update can't change results: a `v*` tag publishes that build under `v/<version>/`
+  for good (`release.yml` keeps it on the `pages-releases` branch, and `deploy.yml` adds every release to the
+  site). This repository's CI runs the action on its own build (`uses: ./ci`), against the examples.
 - **Pull requests (GitHub view).** Sign in with a
   [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new) (Contents,
   Pull requests and, for workflow files, Workflows: read and write). A static page can't use GitHub's OAuth flows
@@ -160,6 +172,7 @@ src/
 ├── actions/                 # GitHub Actions emulator: workflow parsing, ${{ }} expressions, a small bash,
 │                            #   npm/npx/tsc/node shims, the job runner, and the browser toolchain
 ├── github/                  # GitHub: token sign-in, REST client, import, changes and pull requests
+├── ci/                      # the CI page (ci.html): the checks the GitHub action runs in the playground
 ├── editor/monaco.ts         # Monaco set-up (features, languages, workers, theme)
 ├── workspace/               # projects, file tree, tabs and persistence; file icons; menus
 ├── store/workspace-store.ts
@@ -204,6 +217,7 @@ examples/energy-flows/src/   # bundled into src/examples/energy-flows.ts
 | `npm run e2e` | Playwright tests against the dev server and the production build |
 | `node scripts/sync-example.mjs <name>` | Bundle `examples/<name>/` into `src/examples/<name>.ts` |
 | `node scripts/build-fluxkit-types.mjs` | Regenerate fluxkit's declaration files for the playground |
+| `node scripts/write-example.ts <name> <dir>` | Write an example project to a folder (e.g. to run the CI action on it) |
 
 Requires Node.js 25+ (as Boba does). Pull requests run CI; pushes to `main` run the same tests and deploy `dist/` to GitHub Pages.
 

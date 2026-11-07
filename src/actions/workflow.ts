@@ -3,6 +3,8 @@
 // https://docs.github.com/actions/reference/workflows-and-actions/workflow-syntax
 
 import { LineCounter, isMap, parseDocument, type Document } from 'yaml';
+import tsrsPackage from '@tsrs/wasm/package.json' with { type: 'json' };
+import { projectImports } from '../packages/package-manager.ts';
 import { globToRegExp, type Value } from './expressions.ts';
 
 export const WORKFLOW_DIR = '.github/workflows/';
@@ -303,8 +305,29 @@ export function projectWorkflows(files: Record<string, string>): Workflow[] {
     .map((path) => parseWorkflow(path, files[path]));
 }
 
-/** A starter CI workflow for a playground project. */
-export const STARTER_WORKFLOW = `name: CI
+/** The @tsrs/wasm release workflows pin: the compiler this playground runs. */
+export const TSRS_PIN = `@tsrs/wasm@${tsrsPackage.version}`;
+
+/** The tsrs × Monaco CI action, as starter workflows use it. */
+export const CI_ACTION_REF = 'sholtomaud/tsrs-monaco/ci@main';
+
+/**
+ * A starter CI workflow for a playground project. It runs on GitHub as it is:
+ * a type check with the playground's own compiler (pinned), then the type
+ * check and tests in the deployed playground. A project with npm imports
+ * skips the first step, since only the playground fetches their types.
+ */
+export function starterWorkflow(files: Record<string, string> = {}): string {
+  const imports = [...new Set(projectImports(files).map((i) => i.name))];
+  const typecheck = imports.length
+    ? `      # (No separate tsrs type check: ${imports.join(', ')} ${imports.length === 1 ? 'is' : 'are'} only resolved by the
+      # playground, which fetches the types from npm, so the step below type checks too.)
+`
+    : `      # The playground's compiler, pinned: no TypeScript install.
+      - name: Type check with tsrs
+        run: npx -y -p ${TSRS_PIN} tsrs-wasm -p tsconfig.json --noEmit
+`;
+  return `name: CI
 
 on:
   pull_request:
@@ -314,16 +337,22 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # tsrs is WebAssembly; on GitHub, Node runs it (and drives the browser below).
       - uses: actions/setup-node@v7
         with:
-          node-version: 25.x
-      - run: npm ci
-      - name: Type check
-        run: npx tsc -p tsconfig.json
-      - name: Tests
-        run: npm test
+          node-version: 24.x
+${typecheck}      # Type checks and runs the *.test.ts files in the deployed playground, in
+      # headless Chromium: the same compiler, test runner and npm loading as the editor.
+      # Pin playground-version to a release (e.g. v1.0.0) to keep results stable.
+      - name: Test in the playground
+        uses: ${CI_ACTION_REF}
+        with:
+          playground-version: latest
 `;
+}
+
+export const STARTER_WORKFLOW = starterWorkflow();

@@ -39,13 +39,16 @@ test('runs a workflow in the browser: tsc and the tests pass', async ({ page }) 
   await runCi(page);
   await expect(page.locator('#workflow-panel .run-header')).toHaveAttribute('data-state', 'success');
   const panel = page.locator('#workflow-panel');
-  await expect(panel.locator('.step', { hasText: 'Type check' })).toHaveAttribute('data-state', 'success');
-  const tests = panel.locator('.step', { hasText: 'Tests' });
+  await expect(panel.locator('.step', { hasText: 'Type check with tsrs' })).toHaveAttribute('data-state', 'success');
+  // Installing Node only matters on GitHub.
+  await expect(panel.locator('.step', { hasText: 'actions/setup-node' })).toHaveAttribute('data-state', 'noop');
+  await expect(panel.locator('.step', { hasText: 'actions/setup-node' })).toContainText('not needed in the browser');
+  const tests = panel.locator('.step', { hasText: 'Test in the playground' });
   await tests.locator('summary').click();
   await expect(tests).toContainText('✔ greets a user by name');
   await expect(tests).toContainText('pass 2');
   // The job is listed under its workflow in the side bar.
-  await expect(page.locator('#actions-view .job-row[data-job="test"]')).toHaveAttribute('data-state', 'success');
+  await expect(page.locator('#actions-view .job-row[data-job="check"]')).toHaveAttribute('data-state', 'success');
 });
 
 test('a type error fails the workflow, and its annotation opens the file', async ({ page }) => {
@@ -58,7 +61,7 @@ test('a type error fails the workflow, and its annotation opens the file', async
 
   await runCi(page);
   await expect(page.locator('#workflow-panel .run-header')).toHaveAttribute('data-state', 'failure');
-  await expect(page.locator('#workflow-panel .step', { hasText: 'Tests' })).toHaveAttribute('data-state', 'skipped');
+  await expect(page.locator('#workflow-panel .step', { hasText: 'Test in the playground' })).toHaveAttribute('data-state', 'skipped');
   const annotation = page.locator('#workflow-panel .annotations li[data-level="error"]').first();
   await expect(annotation).toContainText('TS2322');
   await annotation.locator('button').click();

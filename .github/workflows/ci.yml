@@ -44,3 +44,72 @@ jobs:
 
       - name: E2E Tests
         run: npx playwright test
+
+  ci-action:
+    # The tsrs × Monaco CI action (ci/) on a real runner, against this branch's
+    # build of the playground, checking the examples as a project's workflow would.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js v25
+        uses: actions/setup-node@v7
+        with:
+          node-version: 25.x
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the playground
+        run: npm run build
+
+      - name: Serve it
+        run: |
+          npx serve -p 3100 dist > /dev/null 2>&1 &
+          for i in $(seq 1 30); do curl -sfL http://localhost:3100/ci.html > /dev/null && exit 0; sleep 1; done
+          exit 1
+
+      - name: Write examples as projects
+        run: |
+          node scripts/write-example.ts hello projects/hello
+          node scripts/write-example.ts odum-cash projects/odum-cash
+          node scripts/write-example.ts hello projects/broken
+          printf '\nexport const bad: number = "x";\n' >> projects/broken/src/greet.ts
+          printf "\ntest('fails', () => expect(1).toBe(2));\n" >> projects/broken/src/greet.test.ts
+
+      - name: Type check with the pinned tsrs CLI, as the starter workflow does
+        working-directory: projects/hello
+        run: npx -y -p "@tsrs/wasm@$(node -p "require('../../package.json').dependencies['@tsrs/wasm']")" tsrs-wasm -p tsconfig.json --noEmit
+
+      - name: Check hello
+        uses: ./ci
+        with:
+          path: projects/hello
+          playground-url: http://localhost:3100
+
+      - name: Run odum-cash's model
+        id: model
+        uses: ./ci
+        with:
+          path: projects/odum-cash
+          playground-url: http://localhost:3100
+          entry: 'true'
+
+      - name: The model reaches its steady state
+        run: grep -q "Steady state J/K = 80" "${{ steps.model.outputs.entry-log }}"
+
+      - name: A broken project fails the action
+        id: broken
+        continue-on-error: true
+        uses: ./ci
+        with:
+          path: projects/broken
+          playground-url: http://localhost:3100
+
+      - name: It failed, with the right counts
+        run: |
+          test "${{ steps.broken.outcome }}" = failure
+          test "${{ steps.broken.outputs.errors }}" = 1
+          test "${{ steps.broken.outputs.failed }}" = 1

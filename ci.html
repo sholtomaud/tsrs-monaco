@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https:;"
+    />
+    <meta name="robots" content="noindex" />
+    <title>tsrs × Monaco CI</title>
+    <script type="module" src="src/ci/ci-main.ts"></script>
+  </head>
+  <body>
+    <main>
+      <h1>tsrs × Monaco CI</h1>
+      <p>
+        This page checks a project the way the playground does (a tsrs type check, then its
+        <code>*.test.ts</code> files), for the <code>sholtomaud/tsrs-monaco/ci</code> GitHub action, which drives it
+        with Playwright. There's nothing to do here by hand.
+      </p>
+      <p id="ci-status">Loading…</p>
+    </main>
+  </body>
+</html>

@@ -58,6 +58,23 @@ jobs:
 
       - name: Build
         run: npm run build
+        env:
+          VITE_PLAYGROUND_VERSION: main@${{ github.sha }}
+
+      # Releases (v1.0.0, …) stay published under v/<version>/, so CI workflows
+      # can pin one (playground-version in the sholtomaud/tsrs-monaco/ci action).
+      # release.yml adds each release to the pages-releases branch.
+      - name: Fetch the published releases
+        id: releases
+        continue-on-error: true
+        uses: actions/checkout@v7
+        with:
+          ref: pages-releases
+          path: releases
+
+      - name: Add the releases to the site
+        if: steps.releases.outcome == 'success'
+        run: if [ -d releases/v ]; then cp -r releases/v dist/v; fi
 
       - name: Prepare 404 page for SPA
         run: cp dist/index.html dist/404.html

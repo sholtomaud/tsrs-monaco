@@ -5,7 +5,7 @@
 import type { ProjectFiles } from '../../compiler/project.ts';
 import { browserToolchain } from '../../actions/browser-toolchain.ts';
 import { runWorkflow, type Conclusion, type JobRun, type RunStatus, type WorkflowRun } from '../../actions/runner.ts';
-import { STARTER_WORKFLOW, WORKFLOW_DIR, projectWorkflows, triggeredBy, type SimulatedEvent, type Workflow } from '../../actions/workflow.ts';
+import { WORKFLOW_DIR, starterWorkflow, projectWorkflows, triggeredBy, type SimulatedEvent, type Workflow } from '../../actions/workflow.ts';
 import type { RepoLink } from '../../github/repository.ts';
 import { codicon, type CodiconName } from '../../workspace/icons.ts';
 import { h } from './dom.ts';
@@ -41,6 +41,16 @@ function statusIcon(state: Conclusion | RunStatus) {
   el.removeAttribute('aria-hidden');
   el.setAttribute('role', 'img');
   el.setAttribute('aria-label', label);
+  return el;
+}
+
+/** A step that only matters on GitHub (installing Node or packages). */
+function noopIcon() {
+  const el = codicon('circleSlash', 'run-status run-noop');
+  el.setAttribute('title', 'Not needed in the browser: on GitHub this step sets up the runner');
+  el.removeAttribute('aria-hidden');
+  el.setAttribute('role', 'img');
+  el.setAttribute('aria-label', 'Not needed in the browser');
   return el;
 }
 
@@ -266,7 +276,7 @@ export class ActionsView {
     const files = this.host.files();
     let path = `${WORKFLOW_DIR}ci.yml`;
     for (let i = 2; files[path] !== undefined; i++) path = `${WORKFLOW_DIR}ci-${i}.yml`;
-    this.host.addFile(path, STARTER_WORKFLOW);
+    this.host.addFile(path, starterWorkflow(files));
     this.render();
   }
 
@@ -324,8 +334,12 @@ export class ActionsView {
       const s = stateOf(step);
       // Failed and running steps open by themselves, unless the user closed them.
       const isOpen = this.open.has(key) || (!this.closed.has(key) && (s === 'failure' || s === 'in_progress'));
-      const summary = h('summary', {}, statusIcon(s), h('span', { class: 'step-name' }, step.name), step.status === 'completed' && step.durationMs ? h('span', { class: 'job-time' }, seconds(step.durationMs)) : null);
-      const details = h('details', { class: 'step', 'data-state': s, open: isOpen }, summary, step.log.length ? this.logView(step.log) : null);
+      const summary = h('summary', {},
+        step.noop ? noopIcon() : statusIcon(s),
+        h('span', { class: 'step-name' }, step.name),
+        step.noop ? h('span', { class: 'step-note' }, 'not needed in the browser') : null,
+        step.status === 'completed' && step.durationMs && !step.noop ? h('span', { class: 'job-time' }, seconds(step.durationMs)) : null);
+      const details = h('details', { class: 'step', 'data-state': step.noop ? 'noop' : s, open: isOpen }, summary, step.log.length ? this.logView(step.log) : null);
       // Recorded on click, not on 'toggle' (which fires later), so a re-render in between keeps it.
       summary.addEventListener('click', () => {
         const opening = !details.open;
