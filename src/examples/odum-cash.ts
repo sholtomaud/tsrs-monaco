@@ -1,5 +1,6 @@
 import { DEFAULT_TSCONFIG, ENTRY, TSCONFIG, type ProjectFiles } from '../compiler/project.ts';
 import { PLAYGROUND_DTS } from './playground-dts.ts';
+import { CI_ACTION_REF, TSRS_PIN } from '../actions/workflow.ts';
 
 export const files: ProjectFiles = {
   [TSCONFIG]: DEFAULT_TSCONFIG,
@@ -153,8 +154,9 @@ test('rejects a non-positive time step', () => {
   '.github/workflows/model-checks.yml': `name: Model checks
 
 # A fuller workflow than hello's: jobs that need each other, a matrix, job
-# outputs, a step summary and an artifact passed between jobs. Run it from
-# the Workflows view (in the activity bar).
+# outputs, a step summary and an artifact passed between jobs. It runs as it
+# is on GitHub, and in the Workflows view (in the activity bar) before you
+# open a pull request.
 on:
   pull_request:
     branches: [main]
@@ -170,7 +172,11 @@ jobs:
       sources: \${{ steps.count.outputs.sources }}
     steps:
       - uses: actions/checkout@v7
-      - run: npx tsc -p tsconfig.json --noEmit
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+      - name: Type check with the playground's compiler
+        run: npx -y -p ${TSRS_PIN} tsrs-wasm -p tsconfig.json --noEmit
       - id: count
         run: echo "sources=$(ls src/*.ts | wc -l)" >> "$GITHUB_OUTPUT"
 
@@ -183,14 +189,17 @@ jobs:
         check: [tests, model]
     steps:
       - uses: actions/checkout@v7
-      - name: Unit tests
-        if: matrix.check == 'tests'
-        run: node --test src/cash.test.ts
-      - name: Run the model and check its steady state
+      # The deployed playground runs the tests, or the model (src/index.ts).
+      - id: playground
+        uses: ${CI_ACTION_REF}
+        with:
+          tests: \${{ matrix.check == 'tests' }}
+          entry: \${{ matrix.check == 'model' }}
+      - name: Check the model's steady state
         if: matrix.check == 'model'
         run: |
-          node src/index.ts | tee model.log
-          grep -q "Steady state J/K = 80" model.log
+          cat "\${{ steps.playground.outputs.entry-log }}"
+          grep -q "Steady state J/K = 80" "\${{ steps.playground.outputs.entry-log }}"
           echo "The model settles at J/K = 80 :white_check_mark:" >> "$GITHUB_STEP_SUMMARY"
 
   build:
@@ -199,8 +208,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Emit JavaScript with tsc
-        run: npx tsc -p tsconfig.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+      - name: Emit JavaScript with tsrs
+        run: npx -y -p ${TSRS_PIN} tsrs-wasm -p tsconfig.json
       - uses: actions/upload-artifact@v4
         with:
           name: compiled

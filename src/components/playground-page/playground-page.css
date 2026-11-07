@@ -358,6 +358,9 @@
 :host .run-cancelled,
 :host .run-skipped,
 :host .run-queued { color: var(--wb-faint); }
+:host .run-noop { color: var(--wb-faint); }
+:host .step[data-state='noop'] .step-name { color: var(--wb-muted); }
+:host .step-note { font-size: 11px; font-style: italic; color: var(--wb-faint); white-space: nowrap; }
 :host .run-in_progress { color: var(--wb-warning); animation: wb-spin 1.2s linear infinite; }
 
 /* ---- Workflow panel ---------------------------------------------------------------- */

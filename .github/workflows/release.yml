@@ -1,0 +1,69 @@
+name: Publish a release
+
+# A tag like v1.0.0 publishes that build of the playground under v/v1.0.0/,
+# where it stays: CI workflows pin it with the sholtomaud/tsrs-monaco/ci
+# action's playground-version input. The build is kept on the pages-releases
+# branch, then deploy.yml (on main, which the github-pages environment
+# allows) redeploys the site with every release in it.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: 'release'
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 25.x
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_PLAYGROUND_VERSION: ${{ github.ref_name }}
+
+      - name: Add it to the pages-releases branch
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          # actions/checkout left this job's token in the repository's config.
+          auth="$(git config --get http.https://github.com/.extraheader)"
+          if git ls-remote --exit-code --heads origin pages-releases > /dev/null; then
+            git -c http.https://github.com/.extraheader="$auth" clone --quiet --branch pages-releases --depth 1 "$(git remote get-url origin)" releases
+          else
+            git init --quiet -b pages-releases releases
+            git -C releases remote add origin "$(git remote get-url origin)"
+          fi
+          git -C releases config http.https://github.com/.extraheader "$auth"
+          rm -rf "releases/v/$VERSION"
+          mkdir -p releases/v
+          cp -r dist "releases/v/$VERSION"
+          git -C releases add -A
+          git -C releases commit --quiet -m "Publish $VERSION"
+          git -C releases push --quiet origin HEAD:pages-releases
+
+      - name: Redeploy the site from main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy.yml --ref main --repo "$GITHUB_REPOSITORY"

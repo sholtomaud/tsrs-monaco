@@ -6,6 +6,7 @@
 // $GITHUB_STEP_SUMMARY, and workflow commands (::error::, ::group::, …).
 
 import type { ProjectFiles } from '../compiler/project.ts';
+import { checkProject, formatCheck, sourceOf } from '../ci/checks.ts';
 import { toolCommands, type JobHost } from './commands.ts';
 import {
   ExpressionError,
@@ -60,6 +61,8 @@ export interface StepRun {
   outcome?: Conclusion;
   log: LogLine[];
   durationMs: number;
+  /** The step only matters on GitHub (installing Node or packages): it did nothing here. */
+  noop?: boolean;
 }
 
 export interface JobRun {
@@ -150,8 +153,13 @@ export function parseFileCommand(text: string): Record<string, string> {
 
 class Cancelled extends Error {}
 
+/** The tsrs × Monaco CI action (ci/action.yml in this repository). */
+export const CI_ACTION = 'sholtomaud/tsrs-monaco/ci';
+
 export class WorkflowRunner {
   readonly run: WorkflowRun;
+  /** What the current step's commands did; see JobHost.effect. */
+  private effects = { real: 0, noop: 0 };
   private options: RunOptions;
   private masks: string[] = [];
   private artifactStore = new Map<string, ProjectFiles>();
@@ -442,6 +450,7 @@ export class WorkflowRunner {
       workspace,
       checkedOut: () => checkedOut,
       notEmulated: (tool, detail) => this.notEmulated(tool, detail),
+      effect: (kind) => this.effects[kind]++,
     };
     const workflowEnv = this.evalEnv(this.options.workflow.env, ctx);
     const env: Record<string, string> = { ...this.defaultEnv(job.id), ...workflowEnv };
@@ -518,7 +527,9 @@ export class WorkflowRunner {
         const stepOutputs: Record<string, string> = {};
         let outcome: Conclusion;
         try {
+          this.effects = { real: 0, noop: 0 };
           outcome = await this.runStep(step, record, stepCtx, { fs, env, path, workspace, host, stepOutputs, jobRun, scope, setCheckout: (files) => (checkedOut = files), job });
+          if (outcome === 'success' && this.effects.noop && !this.effects.real) record.noop = true;
         } catch (error) {
           if (error instanceof Cancelled) throw error;
           record.log.push({ kind: 'error', text: (error as Error).message });
@@ -789,17 +800,18 @@ export class WorkflowRunner {
         return 'success';
       }
       case 'actions/setup-node': {
-        const wanted = inputs['node-version'] || (inputs['node-version-file'] ? `from ${inputs['node-version-file']}` : 'the default');
-        log('out', `Node.js ${wanted} requested; commands run on the playground's toolchain (${this.options.toolchain.description}).`);
+        const wanted = inputs['node-version'] || (inputs['node-version-file'] ? `the version in ${inputs['node-version-file']}` : 'the default version');
+        log('out', `Not needed in the browser: on GitHub this installs Node.js ${wanted}. Here every command runs on ${this.options.toolchain.description}.`);
         job.stepOutputs['node-version'] = 'v25.0.0';
-        if (inputs.cache) log('out', `cache: ${inputs.cache} — nothing to cache, as nothing is installed.`);
+        record.noop = true;
         return 'success';
       }
       case 'actions/cache':
       case 'actions/cache/restore':
       case 'actions/cache/save':
-        log('out', 'Emulated: no cache is kept between runs.');
+        log('out', 'Not needed in the browser: nothing is installed, so there is nothing to cache.');
         job.stepOutputs['cache-hit'] = 'false';
+        record.noop = true;
         return 'success';
       case 'actions/upload-artifact': {
         const files = this.collect(job.fs, inputs.path ?? '', job.workspace);
@@ -833,6 +845,45 @@ export class WorkflowRunner {
         }
         job.stepOutputs['download-path'] = into;
         return 'success';
+      }
+      case CI_ACTION: {
+        // The same pipeline the action runs in the deployed playground's ci.html.
+        const dir = VirtualFS.normalize(inputs.path || '.', job.workspace);
+        if (!job.fs.isFile(`${dir}/tsconfig.json`)) {
+          log('error', `No tsconfig.json in ${dir}. Did the workflow check out the repository (actions/checkout) first?`);
+          return 'failure';
+        }
+        this.effects.real++;
+        const version = inputs['playground-version'] || 'latest';
+        log('info', `On GitHub this runs in headless Chromium on the deployed playground (${version}); here it runs on this playground.`);
+        const check = await checkProject(this.options.toolchain, job.fs.filesUnder(dir), {
+          tests: (inputs.tests || 'true') === 'true',
+          entry: inputs.entry === 'true',
+          signal: this.options.signal,
+        });
+        for (const line of formatCheck(check)) log(line.startsWith('✖') || line.startsWith('    ') ? 'err' : 'out', line);
+        const prefix = dir === job.workspace ? '' : `${dir.slice(job.workspace.length + 1)}/`;
+        for (const p of check.problems) {
+          if (p.severity !== 'error' && p.severity !== 'warning') continue;
+          this.annotate(p.severity, p.message, job.jobRun.key, { title: `TS${p.code}`, file: p.file ? `${prefix}${p.file}` : undefined, line: p.startLineNumber, col: p.startColumn });
+        }
+        for (const t of check.tests ?? []) {
+          if (t.status === 'fail') this.annotate('error', t.error?.split('\n')[0] ?? 'failed', job.jobRun.key, { title: `Test failed: ${t.name}`, file: `${prefix}${sourceOf(t.file)}` });
+        }
+        let entryLog = '';
+        if (check.entry) {
+          entryLog = '/home/runner/work/_temp/tsrs-ci/entry.log';
+          job.fs.write(entryLog, check.entry.console.map((c) => `${c.text}\n`).join(''));
+        }
+        Object.assign(job.stepOutputs, {
+          errors: String(check.errors),
+          passed: String(check.passed),
+          failed: String(check.failed),
+          'entry-log': entryLog,
+          'playground-version': version,
+        });
+        job.jobRun.summary += `### ${check.ok ? '✅' : '❌'} tsrs × Monaco: ${prefix.replace(/\/$/, '') || 'project'}\n\n| Type errors | Tests passed | Tests failed |\n| --- | --- | --- |\n| ${check.errors} | ${check.passed} | ${check.failed} |\n\n`;
+        return check.ok ? 'success' : 'failure';
       }
       case 'actions/configure-pages':
       case 'actions/upload-pages-artifact':

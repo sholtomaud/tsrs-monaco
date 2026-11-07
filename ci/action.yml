@@ -1,0 +1,68 @@
+name: tsrs × Monaco CI
+description: >-
+  Type checks and tests a TypeScript project in the deployed tsrs × Monaco playground, in headless Chromium:
+  the same tsrs compiler, test runner and npm loading (from CDNs) as the editor.
+author: sholtomaud
+branding:
+  icon: check-circle
+  color: blue
+
+inputs:
+  path:
+    description: The project folder, with its tsconfig.json.
+    default: '.'
+  playground-version:
+    description: >-
+      The playground release to check with, e.g. v1.0.0 (published under v/<version>/), or latest.
+      Pin a release so a playground update can't change your results.
+    default: latest
+  playground-url:
+    description: Where the playground is deployed.
+    default: https://sholtomaud.github.io/tsrs-monaco
+  tests:
+    description: Run the src/**/*.test.ts files with test() and expect().
+    default: 'true'
+  entry:
+    description: Also run the entry module (src/index.ts) and save its console output (the entry-log output).
+    default: 'false'
+
+outputs:
+  errors:
+    description: Type errors found.
+    value: ${{ steps.check.outputs.errors }}
+  passed:
+    description: Tests that passed.
+    value: ${{ steps.check.outputs.passed }}
+  failed:
+    description: Tests that failed.
+    value: ${{ steps.check.outputs.failed }}
+  entry-log:
+    description: A file with the entry module's console output, when entry is true.
+    value: ${{ steps.check.outputs.entry-log }}
+  playground-version:
+    description: The playground release that ran the checks.
+    value: ${{ steps.check.outputs.playground-version }}
+
+runs:
+  using: composite
+  steps:
+    # Node only drives the browser (and strips the driver script's types).
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 24.x
+    - name: Install Playwright and Chromium
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        npm ci --no-audit --no-fund
+        npx playwright install --with-deps chromium
+    - id: check
+      name: Check in the playground
+      shell: bash
+      run: node "$GITHUB_ACTION_PATH/run.ts"
+      env:
+        TSRS_CI_PATH: ${{ inputs.path }}
+        TSRS_CI_VERSION: ${{ inputs.playground-version }}
+        TSRS_CI_URL: ${{ inputs.playground-url }}
+        TSRS_CI_TESTS: ${{ inputs.tests }}
+        TSRS_CI_ENTRY: ${{ inputs.entry }}

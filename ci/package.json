@@ -1,0 +1,9 @@
+{
+  "name": "tsrs-monaco-ci-action",
+  "private": true,
+  "description": "Drives the tsrs × Monaco CI page (ci.html) from the GitHub action in this folder.",
+  "type": "module",
+  "dependencies": {
+    "playwright": "1.62.0"
+  }
+}

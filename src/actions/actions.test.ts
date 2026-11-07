@@ -107,7 +107,7 @@ describe('workflow files', () => {
     assert.deepStrictEqual(wf.errors, []);
     assert.strictEqual(wf.name, 'CI');
     assert.deepStrictEqual(Object.keys(wf.on), ['pull_request', 'push', 'workflow_dispatch']);
-    assert.strictEqual(wf.jobs[0].steps.length, 5);
+    assert.strictEqual(wf.jobs[0].steps.length, 4);
 
     const bad = parseWorkflow('w.yml', 'on: push\njobs:\n  a:\n    runs-on: x\n    needs: missing\n    steps:\n      - name: nothing\n');
     assert.deepStrictEqual(bad.errors.map((e) => e.message), [
@@ -170,7 +170,7 @@ describe('running workflows', () => {
     assert.strictEqual(error?.file, 'src/greet.ts');
     assert.strictEqual(error?.title, 'TS2322');
     // Steps after the failure are skipped.
-    assert.strictEqual(r.jobs[0].steps.find((s) => s.name === 'Tests')?.conclusion, 'skipped');
+    assert.strictEqual(r.jobs[0].steps.find((s) => s.name === 'Test in the playground')?.conclusion, 'skipped');
   });
 
   test('a failing test fails the job', async () => {
@@ -181,9 +181,9 @@ describe('running workflows', () => {
   });
 
   test('without actions/checkout the workspace is empty, as on GitHub', async () => {
-    const r = await run('on: pull_request\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test\n');
+    const r = await run('on: pull_request\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: sholtomaud/tsrs-monaco/ci@main\n');
     assert.strictEqual(r.conclusion, 'failure');
-    assert.match(logOf(r), /did the workflow check out the repository/);
+    assert.match(logOf(r), /Did the workflow check out the repository/);
   });
 
   test('outputs flow between steps and jobs; needs, if and matrix', async () => {
@@ -227,7 +227,7 @@ jobs:
   });
 
   test('npm run uses package.json scripts; continue-on-error and failure()', async () => {
-    const files = { ...hello, 'package.json': JSON.stringify({ scripts: { typecheck: 'tsc --noEmit', test: 'node --test', lint: 'eslint .' } }) };
+    const files = { ...hello, 'package.json': JSON.stringify({ scripts: { typecheck: 'tsc --noEmit', test: 'node --test', lint: 'eslint .' }, devDependencies: { typescript: '^7.0.0' } }) };
     const r = await run(`
 on: pull_request
 jobs:
@@ -297,6 +297,36 @@ jobs:
     assert.match(r.jobs[2].summary, /settles at J\/K = 80/);
     assert.match(r.jobs[4].summary, /Build: success/);
     assert.deepStrictEqual(r.notEmulated, []);
+  });
+
+  test('fails where GitHub would: npm ci without a lockfile, npx tsc without TypeScript, a bare tsrs-wasm', async () => {
+    const step = async (command: string, files = hello) => {
+      const r = await run(`on: pull_request\njobs:\n  t:\n    runs-on: x\n    steps:\n      - uses: actions/checkout@v7\n      - run: ${command}\n`, files);
+      return { conclusion: r.conclusion, log: logOf(r), step: r.jobs[0].steps[2] };
+    };
+    assert.match((await step('npm ci')).log, /Could not read package\.json/);
+    const withPkg = { ...hello, 'package.json': '{"devDependencies":{"typescript":"^7.0.0"}}' };
+    assert.match((await step('npm ci', withPkg)).log, /can only install with an existing package-lock\.json/);
+    const locked = { ...withPkg, 'package-lock.json': '{}' };
+    const ci = await step('npm ci', locked);
+    assert.strictEqual(ci.conclusion, 'success');
+    // Installing does nothing here: the step says so.
+    assert.strictEqual(ci.step.noop, true);
+    assert.match((await step('npx tsc --noEmit')).log, /This is not the tsc command you are looking for/);
+    assert.strictEqual((await step('npx tsc --noEmit', withPkg)).conclusion, 'success');
+    assert.match((await step('tsrs-wasm -p tsconfig.json')).log, /tsrs-wasm: command not found/);
+    assert.match((await step('npm test')).log, /use the sholtomaud\/tsrs-monaco\/ci action/);
+    const tsrs = await step('npx -y -p @tsrs/wasm@1.0.0 tsrs-wasm -p tsconfig.json --noEmit');
+    assert.strictEqual(tsrs.conclusion, 'success');
+    assert.strictEqual(tsrs.step.noop, undefined);
+    assert.match(tsrs.log, /✓ No type errors\./);
+  });
+
+  test('setup-node is marked as not needed in the browser', async () => {
+    const r = await run(STARTER_WORKFLOW);
+    const setup = r.jobs[0].steps.find((s) => s.name === 'Run actions/setup-node@v7');
+    assert.strictEqual(setup?.noop, true);
+    assert.match(setup!.log.map((l) => l.text).join('\n'), /Not needed in the browser: on GitHub this installs Node\.js 24\.x/);
   });
 
   test('a workflow the event does not trigger is skipped', async () => {
