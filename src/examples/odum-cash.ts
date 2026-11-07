@@ -150,4 +150,81 @@ test('rejects a non-positive time step', () => {
 });
 `,
   'src/playground.d.ts': PLAYGROUND_DTS,
+  '.github/workflows/model-checks.yml': `name: Model checks
+
+# A fuller workflow than hello's: jobs that need each other, a matrix, job
+# outputs, a step summary and an artifact passed between jobs. Run it from
+# the Workflows view (in the activity bar).
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  typecheck:
+    name: Type check
+    runs-on: ubuntu-latest
+    outputs:
+      sources: \${{ steps.count.outputs.sources }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: npx tsc -p tsconfig.json --noEmit
+      - id: count
+        run: echo "sources=$(ls src/*.ts | wc -l)" >> "$GITHUB_OUTPUT"
+
+  check:
+    name: Check the \${{ matrix.check }}
+    needs: typecheck
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        check: [tests, model]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Unit tests
+        if: matrix.check == 'tests'
+        run: node --test src/cash.test.ts
+      - name: Run the model and check its steady state
+        if: matrix.check == 'model'
+        run: |
+          node src/index.ts | tee model.log
+          grep -q "Steady state J/K = 80" model.log
+          echo "The model settles at J/K = 80 :white_check_mark:" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: Build
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Emit JavaScript with tsc
+        run: npx tsc -p tsconfig.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: compiled
+          path: dist/
+
+  report:
+    name: Report
+    needs: [typecheck, build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: compiled
+          path: compiled
+      - name: Summarise the run
+        run: |
+          echo "Checked \${{ needs.typecheck.outputs.sources }} source files; the build \${{ needs.build.result == 'success' && 'passed' || 'failed' }}."
+          echo "Emitted JavaScript:"
+          ls compiled
+          {
+            echo "### CASH model"
+            echo "- Source files type checked: \${{ needs.typecheck.outputs.sources }}"
+            echo "- Build: \${{ needs.build.result }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+`,
 };

@@ -66,7 +66,7 @@ test('a type error fails the workflow, and its annotation opens the file', async
 });
 
 test('adds a starter workflow to a project without one', async ({ page }) => {
-  await openFile(page, 'odum-cash', 'src/index.ts');
+  await openFile(page, 'fluxkit', 'src/index.ts');
   await page.locator('#view-actions').click();
   await page.locator('#actions-view .tree-hint', { hasText: 'Add a CI workflow' }).click();
   await expect(page.locator('#file-tabs .file-tab[data-file=".github/workflows/ci.yml"]')).toHaveAttribute('aria-selected', 'true');
@@ -129,4 +129,16 @@ test('a failing workflow holds the pull request until you choose to open it anyw
   await page.locator('#pr-anyway').click();
   await expect(page.locator('#github-view .view-notice')).toContainText('Opened pull request #1');
   expect(gh.pulls[0].body).toContain('❌ **CI**');
+});
+
+test("odum-cash's workflow runs every job in the browser: needs, a matrix and an artifact", async ({ page }) => {
+  await openFile(page, 'odum-cash', 'src/index.ts');
+  await page.locator('#view-actions').click();
+  await page.locator('#actions-view .workflow[data-path=".github/workflows/model-checks.yml"] .workflow-run').click();
+  const header = page.locator('#workflow-panel .run-header');
+  await expect(header).not.toHaveAttribute('data-state', /queued|in_progress/, { timeout: 90_000 });
+  await expect(header).toHaveAttribute('data-state', 'success');
+  await expect(page.locator('#actions-view .job-row .job-name')).toHaveText(['Type check', 'Check the tests', 'Check the model', 'Build', 'Report']);
+  await expect(page.locator('#workflow-panel .job-summary').last()).toContainText('Source files type checked: 4');
+  await expect(page.locator('#workflow-panel')).toContainText('Artifacts: compiled (3 files)');
 });
