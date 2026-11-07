@@ -116,7 +116,9 @@ Background: [Cloudflare's TypeScript compiler in Rust](https://socket.dev/blog/c
   workspace's JSON files. `actions/setup-node`, `cache` and `upload`/`download-artifact` are emulated;
   deployments are skipped. Tools that can't run in a browser (eslint, playwright, docker, …) pass with a
   warning, and the run says it was only partly emulated, because GitHub will run them for real. The *hello*
-  example has a CI workflow; **+** in the Workflows view adds one to any project.
+  example has a basic CI workflow, and *odum-cash* a fuller one (`model-checks.yml`: jobs that `need` each
+  other, a matrix, job outputs, step summaries and an artifact passed between jobs); **+** in the Workflows view
+  adds one to any project.
 - **Pull requests (GitHub view).** Sign in with a
   [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new) (Contents,
   Pull requests and, for workflow files, Workflows: read and write). A static page can't use GitHub's OAuth flows

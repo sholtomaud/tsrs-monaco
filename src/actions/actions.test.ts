@@ -6,6 +6,7 @@ import { STARTER_WORKFLOW, expandMatrix, parseWorkflow, triggeredBy } from './wo
 import { parseFileCommand, runWorkflow, type WorkflowRun } from './runner.ts';
 import { nodeToolchain } from './node-toolchain.ts';
 import { files as hello } from '../examples/hello.ts';
+import { files as odumCash } from '../examples/odum-cash.ts';
 
 describe('expressions', () => {
   const ctx: EvalContext = {
@@ -276,6 +277,26 @@ jobs:
     assert.strictEqual(r.conclusion, 'success', logOf(r));
     assert.deepStrictEqual(r.jobs[0].outputs, { version: '1.62.0' });
     assert.match(logOf(r), /require\('\.\/nope\.json'\) is not emulated/);
+  });
+
+  test("odum-cash's example workflow: needs, matrix, outputs, summaries and artifacts", async () => {
+    const yml = odumCash['.github/workflows/model-checks.yml'];
+    const r = await runWorkflow({ workflow: parseWorkflow('.github/workflows/model-checks.yml', yml), event: pr, files: odumCash, toolchain: nodeToolchain }).done;
+    assert.strictEqual(r.conclusion, 'success', r.jobs.map((_, i) => logOf(r, i)).join('\n'));
+    assert.deepStrictEqual(r.jobs.map((j) => [j.name, j.conclusion]), [
+      ['Type check', 'success'],
+      ['Check the tests', 'success'],
+      ['Check the model', 'success'],
+      ['Build', 'success'],
+      ['Report', 'success'],
+    ]);
+    assert.deepStrictEqual(r.jobs[0].outputs, { sources: '4' });
+    assert.deepStrictEqual(Object.keys(r.artifacts[0].files).sort(), ['cash.js', 'cash.test.js', 'index.js']);
+    assert.match(logOf(r, 2), /week 240 {3}M = /);
+    assert.match(logOf(r, 4), /Checked 4 source files; the build passed\.\nEmitted JavaScript:\ncash\.js/);
+    assert.match(r.jobs[2].summary, /settles at J\/K = 80/);
+    assert.match(r.jobs[4].summary, /Build: success/);
+    assert.deepStrictEqual(r.notEmulated, []);
   });
 
   test('a workflow the event does not trigger is skipped', async () => {
