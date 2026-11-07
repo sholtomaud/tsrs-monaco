@@ -110,7 +110,10 @@ async function main(): Promise<number> {
       [files, options] as const
     );
 
-    for (const line of check.log) console.log(line);
+    // Indented, so problem matchers (setup-node registers one for tsc) don't turn
+    // the log's own error lines into extra annotations, without the project's folder;
+    // the annotations below have the right paths.
+    for (const line of check.log) console.log(`  ${line}`);
     for (const p of check.problems) {
       if (p.severity !== 'error' && p.severity !== 'warning') continue;
       const where = p.file ? ` file=${escapeProperty(repoPath(p.file))},line=${p.startLineNumber},col=${p.startColumn},` : ' ';
