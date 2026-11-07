@@ -81,6 +81,12 @@ describe('shell', () => {
     assert.strictEqual(r.out, '[one]\n[three]\n[3]\n');
   });
 
+  test('an assignment exits with its substitution\'s status', async () => {
+    const r = await sh('X=$(false)\necho never');
+    assert.strictEqual(r.code, 1);
+    assert.strictEqual(r.out, '');
+  });
+
   test('unknown commands exit 127', async () => {
     const r = await sh('nope');
     assert.strictEqual(r.code, 127);
@@ -108,7 +114,8 @@ describe('workflow files', () => {
       "jobs.a needs 'missing', which is not a job in this workflow.",
     ]);
     assert.strictEqual(bad.errors[0].line, 7);
-    assert.match(parseWorkflow('w.yml', 'on: [push\n').errors[0].message, /./);
+    const invalid = parseWorkflow('w.yml', 'on: push\njobs:\n  a:\n    steps:\n      - run: a ? 0 : 1\n');
+    assert.strictEqual(invalid.errors[0].line, 5);
   });
 
   test('matrix: product, exclude and include', () => {
@@ -148,7 +155,7 @@ describe('running workflows', () => {
     const r = await run(STARTER_WORKFLOW);
     assert.strictEqual(r.conclusion, 'success', logOf(r));
     const log = logOf(r);
-    assert.match(log, /Checked out 5 files of me\/demo/);
+    assert.match(log, /Checked out 6 files of me\/demo/);
     assert.match(log, /✔ greets a user by name/);
     assert.match(log, /pass 2/);
     assert.deepStrictEqual(r.notEmulated, []);
@@ -243,6 +250,32 @@ jobs:
     assert.doesNotMatch(log, /should-not-run/);
     // eslint can't run here: the run says so.
     assert.deepStrictEqual(r.notEmulated.map((n) => n.tool), ['eslint']);
+  });
+
+  test('node -p reads package.json, as CI one-liners do', async () => {
+    const files = { ...hello, 'package.json': JSON.stringify({ version: '1.2.3', devDependencies: { '@playwright/test': '^1.62.0' } }) };
+    const r = await run(`
+on: pull_request
+jobs:
+  v:
+    runs-on: ubuntu-latest
+    outputs:
+      version: \${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: v
+        run: |
+          VERSION=$(node -p "require('./package.json').devDependencies['@playwright/test'].replace(/[\\^~]/g, '')")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+      - run: |
+          node -e "process.exit(require('./package.json').version === '1.2.3' ? 0 : 1)"
+      - id: missing
+        continue-on-error: true
+        run: node -p "require('./nope.json')"
+`, files);
+    assert.strictEqual(r.conclusion, 'success', logOf(r));
+    assert.deepStrictEqual(r.jobs[0].outputs, { version: '1.62.0' });
+    assert.match(logOf(r), /require\('\.\/nope\.json'\) is not emulated/);
   });
 
   test('a workflow the event does not trigger is skipped', async () => {

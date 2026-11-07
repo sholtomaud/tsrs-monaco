@@ -134,7 +134,7 @@ export function parseSteps(raw: unknown, where: string, errors: Workflow['errors
 /** Parses a workflow file. Syntax and structure problems are returned in `errors`. */
 export function parseWorkflow(path: string, text: string): Workflow {
   const lines = new LineCounter();
-  const doc = parseDocument(text, { lineCounter: lines, uniqueKeys: true, prettyErrors: false });
+  const doc = parseDocument(text, { lineCounter: lines, uniqueKeys: true, prettyErrors: true });
   const fallbackName = path.split('/').pop()!.replace(/\.ya?ml$/, '');
   const workflow: Workflow = { path, name: fallbackName, on: {}, env: {}, jobs: [], defaults: {}, errors: [] };
   for (const error of doc.errors) {

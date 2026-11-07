@@ -7,6 +7,7 @@ import { INDEX_HTML } from '../preview/site.ts';
 import { DEFAULT_TSCONFIG, ENTRY, TSCONFIG, entryFile, type ProjectFiles } from '../compiler/project.ts';
 import { DEFAULT_EXAMPLE, EXAMPLES, findExample } from '../examples/index.ts';
 import { PLAYGROUND_DTS } from '../examples/playground-dts.ts';
+import type { RepoLink } from '../github/repository.ts';
 
 export interface OpenFile {
   project: string;
@@ -19,6 +20,10 @@ export interface UserProject {
   /** Created from: a template, or the project it duplicates. */
   from: string;
 }
+
+/** The view in the side bar. */
+export type SidebarView = 'explorer' | 'actions' | 'github';
+export const SIDEBAR_VIEWS: SidebarView[] = ['explorer', 'actions', 'github'];
 
 export interface WorkspaceState {
   /** Files of each project that has been opened; the others are their example's. */
@@ -34,10 +39,13 @@ export interface WorkspaceState {
   /** Expanded folders in the Explorer, by node id. */
   expanded: string[];
   sidebarVisible: boolean;
+  sidebarView: SidebarView;
   sidebarWidth: number;
   panelVisible: boolean;
   /** The output panel's share of the width beside the editor. */
   panelFraction: number;
+  /** Projects linked to a GitHub repository, for pull requests. */
+  links: Record<string, RepoLink>;
 }
 
 export const STORAGE_KEY = 'tsrs-monaco:workspace';
@@ -55,6 +63,7 @@ export const sameFile = (a: OpenFile | null, b: OpenFile | null) =>
 
 export function projectTitle(project: string, state?: WorkspaceState): string {
   const mine = state?.userProjects.find((p) => p.id === project);
+  if (mine?.from.startsWith('github:')) return mine.from.slice(7);
   if (mine) return mine.from.startsWith('template:') ? `My project (${mine.from.slice(9)})` : `Copy of ${mine.from}`;
   return findExample(project)?.title ?? project;
 }
@@ -131,9 +140,11 @@ export function initialState(): WorkspaceState {
     activeTab: entry,
     expanded: [nodeId(project), ...parentFolders(project, entry.path)],
     sidebarVisible: true,
+    sidebarView: 'explorer',
     sidebarWidth: SIDEBAR_WIDTH.default,
     panelVisible: true,
     panelFraction: PANEL_FRACTION.default,
+    links: {},
   };
 }
 
@@ -196,9 +207,11 @@ export function restore(saved: unknown, legacy?: unknown): WorkspaceState {
       activeTab,
       expanded: Array.isArray(s.expanded) ? s.expanded.filter((x): x is string => typeof x === 'string') : fresh.expanded,
       sidebarVisible: s.sidebarVisible !== false,
+      sidebarView: SIDEBAR_VIEWS.includes(s.sidebarView as SidebarView) ? (s.sidebarView as SidebarView) : 'explorer',
       sidebarWidth: clamp(s.sidebarWidth, SIDEBAR_WIDTH),
       panelVisible: s.panelVisible !== false,
       panelFraction: clamp(s.panelFraction, PANEL_FRACTION),
+      links: restoreLinks(s.links, known),
     };
   }
 
@@ -222,6 +235,18 @@ export function restore(saved: unknown, legacy?: unknown): WorkspaceState {
     };
   }
   return fresh;
+}
+
+const isLink = (v: unknown): v is RepoLink => {
+  const l = v as RepoLink;
+  return !!l && typeof l === 'object' && [l.owner, l.repo, l.base, l.dir].every((x) => typeof x === 'string') &&
+    (l.tracked === undefined || (Array.isArray(l.tracked) && l.tracked.every((t) => typeof t === 'string')));
+};
+
+/** Saved repository links of projects that still exist. */
+function restoreLinks(saved: unknown, known: Set<string>): Record<string, RepoLink> {
+  if (!saved || typeof saved !== 'object') return {};
+  return Object.fromEntries(Object.entries(saved).filter(([id, link]) => known.has(id) && isLink(link)));
 }
 
 /** Files a project can't build without. */

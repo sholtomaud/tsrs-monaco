@@ -24,6 +24,21 @@ export const CODICON = {
   book: '',
   layoutSidebarLeft: '',
   layoutPanel: '',
+  githubAction: '\ueaff',
+  sourceControl: '\uea68',
+  gitPullRequest: '\uea64',
+  runAll: '\ueb9e',
+  signOut: '\uea6e',
+  repo: '\uea62',
+  cloudDownload: '\ueac2',
+  passFilled: '\uebb3',
+  circleFilled: '\uea71',
+  circleSlash: '\ueabd',
+  sync: '\uea77',
+  linkExternal: '\ueb14',
+  refresh: '\ueb37',
+  gitBranch: '\uec6f',
+  info: '\uea74',
   file: '',
 } as const;
 
@@ -57,6 +72,8 @@ const BADGES: [RegExp, Badge][] = [
   [/\.css$/, { color: '#42a5f5', text: '#', size: 12 }],
   [/\.md$/, { color: '#519aba', text: 'M', size: 10 }],
   [/\.svg$/, { color: '#d9822b', text: '◆', size: 10 }],
+  [/\.ya?ml$/, { color: '#cb171e', text: '!', size: 11 }],
+  [/\.ya?ml$/, { color: '#cb171e', text: '!', size: 11 }],
   [/\.wgsl$/, { fill: '#7e57c2', color: '#fff', text: 'W', size: 8 }],
 ];
 

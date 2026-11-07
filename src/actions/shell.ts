@@ -452,6 +452,8 @@ export class Shell {
   private status = 0;
   private signal?: AbortSignal;
   private positional: string[] = [];
+  /** The status of the last $(…) substitution: an assignment alone exits with it. */
+  private substitutionStatus = 0;
 
   constructor(options: ShellOptions) {
     this.fs = options.fs;
@@ -581,6 +583,7 @@ export class Shell {
   }
 
   private async simple(node: Node & { type: 'simple' }, io: ShellIO): Promise<number> {
+    this.substitutionStatus = 0;
     const words = (await Promise.all(node.words.map((w) => this.expand(w, io)))).flat();
     const assigned: Record<string, string> = {};
     for (const a of node.assignments) {
@@ -591,7 +594,7 @@ export class Shell {
       Object.assign(this.env, assigned);
       const target = await this.redirect(node.redirects, io);
       target?.flush();
-      return target ? 0 : 1;
+      return target ? this.substitutionStatus : 1;
     }
     const target = await this.redirect(node.redirects, io);
     if (!target) return 1;
@@ -750,7 +753,7 @@ export class Shell {
     let out = '';
     const shell = new Shell({ fs: this.fs, env: this.env, cwd: this.cwd, commands: this.commands, errexit: false, signal: this.signal });
     shell.functions = this.functions;
-    await shell.run(script, { stdin: '', stdout: (t) => (out += t), stderr: io.stderr });
+    this.substitutionStatus = await shell.run(script, { stdin: '', stdout: (t) => (out += t), stderr: io.stderr });
     return out.replace(/\n+$/, '');
   }
 

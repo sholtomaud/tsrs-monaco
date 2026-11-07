@@ -197,3 +197,20 @@ describe('user projects', () => {
     assert.ok(state.projects['my-project']['src/index.ts'].includes('Hello from my-project'));
   });
 });
+
+describe('repository links', () => {
+  test('restore keeps valid links of projects that exist, and the side bar view', () => {
+    const state = restore({
+      ...initialState(),
+      sidebarView: 'github',
+      links: {
+        hello: { owner: 'a', repo: 'b', base: 'main', dir: '', tracked: ['src/index.ts'] },
+        gone: { owner: 'a', repo: 'b', base: 'main', dir: '' },
+        'odum-cash': { owner: 'a' },
+      },
+    });
+    assert.deepStrictEqual(state.links, { hello: { owner: 'a', repo: 'b', base: 'main', dir: '', tracked: ['src/index.ts'] } });
+    assert.strictEqual(state.sidebarView, 'github');
+    assert.strictEqual(restore({ ...initialState(), sidebarView: 'nope' }).sidebarView, 'explorer');
+  });
+});

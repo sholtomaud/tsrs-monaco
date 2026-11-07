@@ -40,6 +40,7 @@ import {
   tabLabels,
   type FolderNode,
   type OpenFile,
+  type SidebarView,
   type TreeNode,
   type WorkspaceState,
 } from '../../workspace/workspace.ts';
@@ -58,6 +59,11 @@ import {
   isWebApp,
   type PreviewConsoleMessage,
 } from '../../preview/site.ts';
+import { isWorkflowFile } from '../../actions/workflow.ts';
+import { getGitHubAuth } from '../../github/auth.ts';
+import type { ImportResult, RepoLink } from '../../github/repository.ts';
+import { ActionsView } from './actions-view.ts';
+import { GitHubView } from './github-view.ts';
 import tsrsPackage from '@tsrs/wasm/package.json' with { type: 'json' };
 import template from './playground-page.html?raw';
 import style from './playground-page.css?raw';
@@ -71,7 +77,7 @@ const MARKER_SEVERITY: Record<Severity, monaco.MarkerSeverity> = {
   hint: monaco.MarkerSeverity.Hint,
 };
 
-type Panel = 'console' | 'preview' | 'tests' | 'plot' | 'js' | 'problems';
+type Panel = 'console' | 'preview' | 'tests' | 'plot' | 'workflow' | 'js' | 'problems';
 type Mode = RunRequest['mode'];
 type StatusState = 'loading' | 'ready' | 'busy' | 'error';
 
@@ -121,6 +127,9 @@ export class PlaygroundPageComponent extends BaseComponent {
   private editing: Editing | null = null;
   /** Each project's last console, plots and test results, kept when switching. */
   private savedOutputs = new Map<string, SavedOutput>();
+  private actions!: ActionsView;
+  private github!: GitHubView;
+  private viewTimer = 0;
   private onPreviewMessage = (e: MessageEvent<PreviewConsoleMessage>) => {
     const frame = this.$<HTMLIFrameElement>('#preview-frame');
     if (e.source !== frame.contentWindow || e.data?.source !== 'tsrs-preview') return;
@@ -186,7 +195,9 @@ export class PlaygroundPageComponent extends BaseComponent {
     this.$('#add-file').addEventListener('click', () => this.startNewFile());
     this.$('#add-project').addEventListener('click', () => this.startNewProject({ template: 'blank' }));
     this.$('#collapse-all').addEventListener('click', () => this.collapseAll());
-    this.$('#view-explorer').addEventListener('click', () => this.toggleSidebar());
+    this.$('#view-explorer').addEventListener('click', () => this.showView('explorer'));
+    this.$('#view-actions').addEventListener('click', () => this.showView('actions'));
+    this.$('#view-github').addEventListener('click', () => this.showView('github'));
     this.$('#menu-button').addEventListener('click', () => this.openAppMenu());
     this.$('#status-problems').addEventListener('click', () => {
       this.setPanelVisible(true);
@@ -201,6 +212,7 @@ export class PlaygroundPageComponent extends BaseComponent {
     );
     this.initExplorer();
     this.initSashes();
+    this.initViews();
 
     this.compiler.addEventListener('ready', this.onCompilerReady);
     window.addEventListener('message', this.onPreviewMessage);
@@ -210,6 +222,8 @@ export class PlaygroundPageComponent extends BaseComponent {
 
   disconnectedCallback() {
     window.clearTimeout(this.checkTimer);
+    window.clearTimeout(this.viewTimer);
+    this.actions?.cancel();
     this.compiler.removeEventListener('ready', this.onCompilerReady);
     window.removeEventListener('message', this.onPreviewMessage);
     document.removeEventListener('keydown', this.onKeydown);
@@ -287,7 +301,10 @@ export class PlaygroundPageComponent extends BaseComponent {
         workspaceStore.setState({
           projects: { ...state.projects, [project]: { ...files, [path]: model.getValue() } },
         });
-        if (project === state.activeProject) this.scheduleCheck();
+        if (project === state.activeProject) {
+          this.scheduleCheck();
+          if (isWorkflowFile(path)) this.scheduleViews();
+        }
       })
     );
     this.models.set(key, model);
@@ -318,6 +335,7 @@ export class PlaygroundPageComponent extends BaseComponent {
     this.lastResult = null;
     this.problemFiles.clear();
     this.restoreOutputs(project);
+    this.renderViews();
     this.check();
   }
 
@@ -864,7 +882,10 @@ export class PlaygroundPageComponent extends BaseComponent {
       this.setProjectFiles(editing.project, { ...files, [result.path]: initial });
       this.createModel(editing.project, result.path, initial);
       this.openFile({ project: editing.project, path: result.path }, { focus: true });
-      if (editing.project === this.ws().activeProject) this.scheduleCheck();
+      if (editing.project === this.ws().activeProject) {
+        this.scheduleCheck();
+        this.scheduleViews();
+      }
       return;
     }
     if (result.path === editing.path) {
@@ -890,7 +911,10 @@ export class PlaygroundPageComponent extends BaseComponent {
       this.renderTabs();
       this.renderTree();
     }
-    if (editing.project === state.activeProject) this.scheduleCheck();
+    if (editing.project === state.activeProject) {
+      this.scheduleCheck();
+      this.scheduleViews();
+    }
   }
 
   private deleteFile(project: string, path: string) {
@@ -903,7 +927,10 @@ export class PlaygroundPageComponent extends BaseComponent {
     this.closeTab({ project, path });
     this.disposeModel(project, path);
     this.renderTree();
-    if (project === this.ws().activeProject) this.scheduleCheck();
+    if (project === this.ws().activeProject) {
+      this.scheduleCheck();
+      this.scheduleViews();
+    }
   }
 
   /** Opens a name box at the top of the Projects section. */
@@ -937,8 +964,11 @@ export class PlaygroundPageComponent extends BaseComponent {
     const projects = { ...state.projects };
     delete projects[project];
     const tabs = state.tabs.filter((t) => t.project !== project);
+    const links = { ...state.links };
+    delete links[project];
     workspaceStore.setState({
       projects,
+      links,
       userProjects: state.userProjects.filter((p) => p.id !== project),
       tabs,
       expanded: state.expanded.filter((id) => id !== project && !id.startsWith(`${project}/`)),
@@ -984,14 +1014,119 @@ export class PlaygroundPageComponent extends BaseComponent {
     bench.style.setProperty('--sidebar-width', `${state.sidebarWidth}px`);
     bench.style.setProperty('--editor-fraction', `${(1 - state.panelFraction) * 100}fr`);
     bench.style.setProperty('--panel-fraction', `${state.panelFraction * 100}fr`);
-    this.$('#view-explorer').setAttribute('aria-pressed', String(state.sidebarVisible));
+    for (const view of ['explorer', 'actions', 'github'] as const) {
+      this.$(`#view-${view}`).setAttribute('aria-pressed', String(state.sidebarVisible && state.sidebarView === view));
+      this.querySelector<HTMLElement>(`.sidebar .view[data-view="${view}"]`)!.hidden = state.sidebarView !== view;
+    }
     this.$('#toggle-panel').setAttribute('aria-pressed', String(state.panelVisible));
   }
 
   private toggleSidebar() {
     workspaceStore.setState({ sidebarVisible: !this.ws().sidebarVisible });
     this.applyLayout();
-    if (this.ws().sidebarVisible) this.$('#explorer').focus();
+    if (this.ws().sidebarVisible && this.ws().sidebarView === 'explorer') this.$('#explorer').focus();
+  }
+
+  /** Shows a side bar view; its activity button hides the side bar again, as in VS Code. */
+  private showView(view: SidebarView) {
+    const state = this.ws();
+    if (state.sidebarVisible && state.sidebarView === view) {
+      this.toggleSidebar();
+      return;
+    }
+    workspaceStore.setState({ sidebarVisible: true, sidebarView: view });
+    this.applyLayout();
+    this.renderViews();
+    if (view === 'explorer') this.$('#explorer').focus();
+  }
+
+  // ---- Workflows and GitHub ------------------------------------------------------
+
+  private initViews() {
+    const files = () => this.files();
+    const project = () => this.ws().activeProject;
+    const link = () => this.ws().links[this.ws().activeProject];
+    const openAt = (path: string, line?: number, column?: number) => {
+      const p = project();
+      if (projectFiles(this.ws(), p)[path] === undefined) return;
+      this.openFile({ project: p, path }, { focus: true });
+      if (line) {
+        const position = { lineNumber: line, column: column ?? 1 };
+        this.editor.setPosition(position);
+        this.editor.revealPositionInCenter(position);
+      }
+    };
+    this.actions = new ActionsView(this.$('#actions-view'), this.$('#workflow-panel'), {
+      project,
+      files,
+      link,
+      actor: () => getGitHubAuth().current?.user.login,
+      openFile: openAt,
+      addFile: (path, text) => this.addFile(project(), path, text),
+      showPanel: () => {
+        this.setPanelVisible(true);
+        this.showPanel('workflow');
+      },
+    });
+    this.github = new GitHubView(this.$('#github-view'), {
+      project,
+      files,
+      link,
+      setLink: (l) => this.setLink(project(), l),
+      openFile: (path) => openAt(path),
+      importProject: (result) => this.importProject(result),
+      runWorkflows: (base) => this.actions.runAll({ name: 'pull_request', branch: base }),
+    });
+    this.renderViews();
+  }
+
+  private scheduleViews() {
+    window.clearTimeout(this.viewTimer);
+    this.viewTimer = window.setTimeout(() => this.renderViews(), CHECK_DELAY_MS);
+  }
+
+  private renderViews() {
+    window.clearTimeout(this.viewTimer);
+    if (!this.actions) return;
+    this.actions.render();
+    this.github.render();
+  }
+
+  private setLink(project: string, link: RepoLink | undefined) {
+    const links = { ...this.ws().links };
+    if (link) links[project] = link;
+    else delete links[project];
+    workspaceStore.setState({ links });
+    this.renderViews();
+  }
+
+  /** Adds a file to a project and opens it. */
+  private addFile(project: string, path: string, text: string) {
+    const files = projectFiles(this.ws(), project);
+    if (files[path] !== undefined) return;
+    this.setProjectFiles(project, { ...files, [path]: text });
+    this.createModel(project, path, text);
+    this.openFile({ project, path }, { focus: true });
+    this.renderTree();
+    this.renderViews();
+  }
+
+  /** A repository (or folder) from GitHub, as a new project linked to it. */
+  private importProject(result: ImportResult) {
+    const state = this.ws();
+    const id = freeProjectName(result.link.dir ? result.link.dir.split('/').pop()! : result.link.repo, state);
+    const from = `github:${result.link.owner}/${result.link.repo}${result.link.dir ? `/${result.link.dir}` : ''}`;
+    const files = result.files;
+    const first = [entryFile(files), 'README.md', ...Object.keys(files)].find((p) => files[p] !== undefined);
+    workspaceStore.setState({
+      projects: { ...state.projects, [id]: files },
+      userProjects: [...state.userProjects, { id, from }],
+      links: { ...state.links, [id]: result.link },
+      expanded: [...new Set([...state.expanded, nodeId(id), ...(first ? parentFolders(id, first) : [])])],
+    });
+    this.ensureProject(id);
+    if (first) this.openFile({ project: id, path: first }, { focus: true });
+    else this.renderTree();
   }
 
   private setPanelVisible(visible: boolean) {
@@ -1081,6 +1216,9 @@ export class PlaygroundPageComponent extends BaseComponent {
         { label: 'Run', keybinding: 'Ctrl+Enter', run: () => this.run() },
         { label: 'Run Tests', keybinding: 'Ctrl+Shift+Enter', run: () => this.run('test') },
         { label: 'Stop', disabled: this.$<HTMLButtonElement>('#stop').disabled, run: () => this.stop() },
+        'separator',
+        { label: 'Run Workflows', disabled: this.actions.running, run: () => { this.showView('actions'); void this.actions.runAll(); } },
+        { label: 'Create Pull Request…', run: () => this.showView('github') },
         'separator',
         { label: state.sidebarVisible ? 'Hide Explorer' : 'Show Explorer', keybinding: 'Ctrl+B', run: () => this.toggleSidebar() },
         { label: state.panelVisible ? 'Hide Output' : 'Show Output', keybinding: 'Ctrl+J', run: () => this.togglePanel() },
@@ -1498,9 +1636,10 @@ export class PlaygroundPageComponent extends BaseComponent {
   // ---- Chrome ------------------------------------------------------------------
 
   private showPanel(panel: Panel) {
-    this.querySelectorAll<HTMLElement>('.tabs [data-panel]').forEach((tab) =>
-      tab.setAttribute('aria-selected', String(tab.dataset.panel === panel))
-    );
+    this.querySelectorAll<HTMLElement>('.tabs [data-panel]').forEach((tab) => {
+      tab.setAttribute('aria-selected', String(tab.dataset.panel === panel));
+      if (tab.dataset.panel === panel) tab.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+    });
     this.querySelectorAll<HTMLElement>('.panel').forEach((el) => {
       el.hidden = el.dataset.panel !== panel;
     });

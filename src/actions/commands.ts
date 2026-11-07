@@ -193,6 +193,51 @@ async function runScript(file: string, ctx: CommandContext, host: JobHost): Prom
 }
 
 
+const EVAL_MODULE = 'dist/__node_eval__.js';
+
+/**
+ * `node -e` / `node -p`: runs the snippet in the run worker (never on the
+ * page), with a require() that reads the workspace's JSON files, so CI
+ * one-liners like node -p "require('./package.json').version" work.
+ */
+async function evaluateInline(code: string, print: boolean, ctx: CommandContext, host: JobHost): Promise<number> {
+  const json: Record<string, string> = {};
+  for (const [path, text] of Object.entries(ctx.fs.filesUnder(host.workspace))) {
+    if (path.endsWith('.json') && !path.includes('node_modules/')) json[`${host.workspace}/${path}`] = text;
+  }
+  const module = `const __json = ${JSON.stringify(json)};
+const __cwd = ${JSON.stringify(ctx.cwd)};
+const __resolve = (p) => {
+  const parts = [];
+  for (const part of (p.startsWith('/') ? p : __cwd + '/' + p).split('/')) {
+    if (!part || part === '.') continue;
+    if (part === '..') parts.pop(); else parts.push(part);
+  }
+  return '/' + parts.join('/');
+};
+const require = (p) => {
+  const path = __resolve(p);
+  const text = __json[path] ?? __json[path + '.json'];
+  if (text === undefined) throw new Error("require('" + p + "') is not emulated: only the workspace's JSON files can be required");
+  return JSON.parse(text);
+};
+const process = { env: ${JSON.stringify(ctx.env)}, argv: ['node'], cwd: () => __cwd, platform: 'linux', version: '${NODE_VERSION}', exitCode: 0,
+  exit(code = 0) { throw Object.assign(new Error('process.exit(' + code + ')'), { exitCode: code }); } };
+const __dirname = __cwd;
+${print ? `console.log((\n${code}\n));` : code}
+`;
+  const files = projectAt(ctx);
+  const outcome = await host.toolchain.run(files, { exitCode: 0, diagnostics: [], outputs: { [EVAL_MODULE]: module } }, EVAL_MODULE, (level, text) => {
+    (level === 'error' || level === 'warn' ? ctx.io.stderr : ctx.io.stdout)(`${text}\n`);
+  }, ctx.signal);
+  if (!outcome.ok) {
+    const exit = /process\.exit\((\d+)\)/.exec(outcome.error ?? '');
+    if (exit) return Number(exit[1]);
+    return fail(ctx, outcome.error ?? 'The script failed.');
+  }
+  return 0;
+}
+
 function node(host: JobHost): Command {
   return async (args, ctx) => {
     if (args[0] === '--version' || args[0] === '-v') {
@@ -206,7 +251,7 @@ function node(host: JobHost): Command {
     }
     if (rest[0] === '--test') return runTests(rest.slice(1), ctx, host, 'node --test');
     if (rest[0] === '-e' || rest[0] === '-p' || rest[0] === '--eval' || rest[0] === '--print') {
-      return fail(ctx, `node ${rest[0]}: evaluating inline JavaScript isn't emulated; put it in a file under src/ and run that.`);
+      return evaluateInline(rest[1] ?? '', rest[0] === '-p' || rest[0] === '--print', ctx, host);
     }
     if (!rest.length) return fail(ctx, 'node: the REPL is not available.');
     return runScript(rest[0], ctx, host);

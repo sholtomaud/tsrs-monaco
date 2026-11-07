@@ -674,6 +674,10 @@ export class WorkflowRunner {
     let code: number;
     try {
       code = await shell.run(script, { stdin: '', stdout: out.write, stderr: err.write });
+    } catch (error) {
+      // A tool stopped by the timeout or Cancel; reported below.
+      if (!controller.signal.aborted) throw error;
+      code = 130;
     } finally {
       clearTimeout(timer);
       outer?.removeEventListener('abort', onAbort);
